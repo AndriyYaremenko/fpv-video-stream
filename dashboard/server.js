@@ -44,6 +44,10 @@ export function createApp({ registry, getPaths, config }) {
     if (config.telemetryToken && req.get('authorization') !== `Bearer ${config.telemetryToken}`) {
       return res.status(401).json({ error: 'bad token' });
     }
+    // Only accept telemetry for known devices — bounds the Map and rejects typos/spam.
+    if (!(registry.devices || []).some((d) => d.id === req.params.id)) {
+      return res.status(404).json({ error: 'unknown device' });
+    }
     telemetry.set(req.params.id, { ...req.body, _ts: Date.now() });
     res.json({ ok: true });
   });
@@ -67,7 +71,11 @@ export function createApp({ registry, getPaths, config }) {
   });
 
   app.get('/api/devices', requireAuth, async (req, res) => {
-    res.json(await snapshot());
+    try {
+      res.json(await snapshot());
+    } catch (err) {
+      res.status(500).json({ error: 'snapshot failed' });
+    }
   });
 
   // ---- SSE stream of status diffs ----
@@ -118,4 +126,4 @@ export async function start() {
   app.listen(port, host, () => console.log(`Dashboard on http://${host}:${port}`));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) start();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) start();
