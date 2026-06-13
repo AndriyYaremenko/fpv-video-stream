@@ -28,6 +28,12 @@ test('webrtc advertises only the WG IP as host candidate', () => {
   assert.deepEqual(c.webrtcAdditionalHosts, ['10.8.0.1']);
 });
 
+test('HTTP-server encryption flags are booleans, not strings (MediaMTX expects bool)', () => {
+  const c = buildConfigObject(reg, opts);
+  assert.strictEqual(c.webrtcEncryption, false); // MediaMTX: cannot unmarshal string into bool
+  assert.strictEqual(c.rtspEncryption, 'no');    // rtsp is a string enum, stays a string
+});
+
 test('each device gets a publish-only user scoped to its own path', () => {
   const c = buildConfigObject(reg, opts);
   const pi01 = c.authInternalUsers.find((u) => u.user === 'pi-01');
