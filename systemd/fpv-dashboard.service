@@ -1,0 +1,20 @@
+[Unit]
+Description=FPV dashboard (Express + WHEP grid)
+After=network-online.target mediamtx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fpv-video-stream
+EnvironmentFile=/opt/fpv-video-stream/.env
+ExecStart=/usr/bin/node dashboard/server.js
+Restart=always
+RestartSec=2
+User=fpv
+Group=fpv
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
