@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FPV — Вхід</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="login-page">
+  <form class="login-card" method="POST" action="/login">
+    <h1>FPV Відеоспостереження</h1>
+    <input name="user" placeholder="Логін" autocomplete="username" required />
+    <input name="pass" type="password" placeholder="Пароль" autocomplete="current-password" required />
+    <button type="submit">Увійти</button>
+    <p class="err" id="err"></p>
+  </form>
+  <script>
+    if (new URLSearchParams(location.search).has('error')) {
+      document.getElementById('err').textContent = 'Невірний логін або пароль';
+    }
+  </script>
+</body>
+</html>
