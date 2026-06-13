@@ -22,8 +22,9 @@ case "$ARCH" in amd64) MTX_ARCH=linux_amd64;; arm64) MTX_ARCH=linux_arm64v8;; *)
 echo "==> [1/8] Base packages (node, jq, curl, tar)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl tar jq ca-certificates >/dev/null
-if ! command -v node >/dev/null || [ "$(node -v | cut -dv -f2 | cut -d. -f1)" -lt 18 ]; then
+apt-get install -y -qq curl tar jq ca-certificates rsync >/dev/null
+NODE_MAJOR="$(node -v 2>/dev/null | cut -dv -f2 | cut -d. -f1)"
+if ! command -v node >/dev/null || [ "${NODE_MAJOR:-0}" -lt 18 ]; then
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null
   apt-get install -y -qq nodejs >/dev/null
 fi
@@ -49,7 +50,9 @@ mkdir -p /usr/local/etc
 
 echo "==> [4/8] App files -> $APP_DIR"
 mkdir -p "$APP_DIR"
-cp -r "$SRC_DIR/." "$APP_DIR/"
+if [ "$SRC_DIR" != "$APP_DIR" ]; then
+  rsync -a --exclude='.git' --exclude='node_modules' --exclude='.env' --exclude='devices.yml' --exclude='mediamtx.yml' "$SRC_DIR/" "$APP_DIR/"
+fi
 cd "$APP_DIR"
 
 echo "==> [5/8] .env and devices.yml (created from examples if missing)"
@@ -75,10 +78,12 @@ chown -R fpv:fpv "$APP_DIR"
 
 echo "==> [7/8] systemd units"
 sed "s#/opt/fpv-video-stream#${APP_DIR}#g" systemd/fpv-dashboard.service > /etc/systemd/system/fpv-dashboard.service
-cp systemd/mediamtx.service /etc/systemd/system/mediamtx.service
+sed "s#wg-quick@wg0#wg-quick@${WG_IFACE}#g" systemd/mediamtx.service > /etc/systemd/system/mediamtx.service
 systemctl daemon-reload
-systemctl enable --now mediamtx.service
-systemctl enable --now fpv-dashboard.service
+systemctl enable mediamtx.service fpv-dashboard.service
+# restart (not just enable --now) so a re-run picks up an upgraded binary / regenerated config
+systemctl restart mediamtx.service
+systemctl restart fpv-dashboard.service
 
 echo "==> [8/8] Firewall guidance (not enforced automatically)"
 cat <<EOF
