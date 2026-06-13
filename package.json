@@ -1,0 +1,19 @@
+{
+  "name": "fpv-video-stream",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Server side for multi-node FPV video surveillance (MediaMTX + dashboard)",
+  "scripts": {
+    "test": "node --test",
+    "gen-config": "node bin/gen-mediamtx.js",
+    "add-device": "node bin/add-device.js",
+    "start": "node dashboard/server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "cookie-session": "^2.1.0",
+    "express": "^4.19.2",
+    "js-yaml": "^4.1.0"
+  }
+}

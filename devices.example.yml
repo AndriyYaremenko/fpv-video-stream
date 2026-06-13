@@ -1,0 +1,13 @@
+# Device registry — single source of truth.
+# Copy to devices.yml (git-ignored) for real secrets. `id` is the RTSP path AND publish username.
+read_user: viewer
+read_pass: CHANGE_ME_READ_PASS
+devices:
+  - id: pi-01
+    name: "Front Gate"
+    location: "Perimeter — North"
+    publish_pass: CHANGE_ME_PI01
+  - id: pi-02
+    name: "Yard"
+    location: "Perimeter — East"
+    publish_pass: CHANGE_ME_PI02
