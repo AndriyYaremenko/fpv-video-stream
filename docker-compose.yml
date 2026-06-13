@@ -1,0 +1,57 @@
+# FPV video-stream — Docker deployment for a host where wg-easy runs as a container.
+#
+# MediaMTX and the dashboard share the wg-easy container's network namespace
+# (network_mode: container:wg-easy), so they bind to 10.8.0.1 (wg0) and are reachable
+# by WireGuard clients exactly as designed — without touching wg-easy or traefik, and
+# without publishing any host ports.
+#
+# Prereqs on the host:
+#   - the wg-easy container is running and named "wg-easy" (docker ps)
+#   - ./.env exists (copy from .env.example; install sets WG_IP=10.8.0.1, DASH_PASS, SESSION_SECRET)
+#   - ./devices.yml exists (copy from devices.example.yml or build via compose-add-device.sh)
+#   - ./runtime/ holds the generated mediamtx.yml (created by the config-gen step)
+#
+# Bring up:   docker compose up -d --build
+# Add a node: ./compose-add-device.sh <id> "<name>" "<location>"
+
+services:
+  # One-shot: render mediamtx.yml from devices.yml into ./runtime, rotating placeholder creds.
+  config-gen:
+    build: .
+    image: fpv-dashboard:latest
+    command: ["node", "bin/gen-mediamtx.js"]
+    env_file: .env
+    environment:
+      DEVICES_FILE: /app/devices.yml
+      MEDIAMTX_CONFIG: /runtime/mediamtx.yml
+    volumes:
+      - ./devices.yml:/app/devices.yml
+      - ./runtime:/runtime
+    restart: "no"
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    network_mode: "container:wg-easy"
+    # Explicit entrypoint+command so the config path is deterministic regardless of image defaults.
+    entrypoint: ["/mediamtx"]
+    command: ["/runtime/mediamtx.yml"]
+    volumes:
+      - ./runtime:/runtime:ro
+    depends_on:
+      config-gen:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    image: fpv-dashboard:latest
+    network_mode: "container:wg-easy"
+    env_file: .env
+    environment:
+      DEVICES_FILE: /app/devices.yml
+      MTX_API_BASE: http://127.0.0.1:9997
+    volumes:
+      - ./devices.yml:/app/devices.yml:ro
+    depends_on:
+      - mediamtx
+    restart: unless-stopped

@@ -30,6 +30,28 @@ The installer is idempotent and **does not touch wg-easy/WireGuard**. It install
 Node, generates `.env` and `devices.yml` (from examples) on first run, renders the config, and
 starts both systemd services. Review `.env` afterwards (set `DASH_USER` / `DASH_PASS`).
 
+## Install (Docker — when WireGuard runs as a container, e.g. wg-easy)
+
+If WireGuard runs as a Docker container (so `wg0`/`10.8.0.1` live inside that container's
+network namespace, not on the host), use the Compose deployment instead of `install.sh`.
+MediaMTX and the dashboard join the wg-easy container's network namespace
+(`network_mode: container:wg-easy`), bind to `10.8.0.1` (wg0), and become reachable by
+WireGuard clients — without modifying wg-easy and without publishing any host ports.
+
+```bash
+git clone https://github.com/AndriyYaremenko/fpv-video-stream.git
+cd fpv-video-stream
+cp .env.example .env        # set WG_IP=10.8.0.1, a strong DASH_PASS and SESSION_SECRET
+cp devices.example.yml devices.yml   # or build it with ./compose-add-device.sh
+docker compose up -d --build
+```
+
+Prereqs: the WireGuard container must be named `wg-easy`. The dashboard is then reachable at
+`http://10.8.0.1:8080` from any WireGuard client. Add nodes with
+`./compose-add-device.sh <id> "<name>" "<location>"` (regenerates the config and restarts
+mediamtx + dashboard). Note: if the `wg-easy` container is recreated, restart these services
+(`docker compose restart mediamtx dashboard`) so they re-attach to the new namespace.
+
 ## Add a new node
 
 ```bash

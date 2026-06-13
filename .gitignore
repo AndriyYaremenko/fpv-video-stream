@@ -4,3 +4,4 @@ devices.yml
 mediamtx.yml
 node_modules/
 *.log
+runtime/
