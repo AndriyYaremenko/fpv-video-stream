@@ -1,0 +1,45 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { genSecret, addDevice, ensureReadUser, validateId } from '../lib/registry.js';
+
+test('genSecret returns a long url-safe token', () => {
+  const s = genSecret();
+  assert.ok(s.length >= 24);
+  assert.match(s, /^[A-Za-z0-9_-]+$/);
+  assert.notEqual(genSecret(), genSecret());
+});
+
+test('validateId accepts valid ids and rejects bad ones', () => {
+  assert.equal(validateId('pi-01'), true);
+  assert.equal(validateId('cam_2'), true);
+  assert.equal(validateId('UPPER'), false);     // no uppercase
+  assert.equal(validateId('has space'), false);
+  assert.equal(validateId('-leading'), false);
+  assert.equal(validateId(''), false);
+});
+
+test('addDevice appends a device with a generated publish_pass', () => {
+  const reg = { read_user: 'viewer', read_pass: 'x', devices: [] };
+  const d = addDevice(reg, { id: 'pi-09', name: 'Shed', location: 'West' });
+  assert.equal(d.id, 'pi-09');
+  assert.equal(d.name, 'Shed');
+  assert.ok(d.publish_pass.length >= 24);
+  assert.equal(reg.devices.length, 1);
+});
+
+test('addDevice rejects duplicate id', () => {
+  const reg = { devices: [{ id: 'pi-01', name: 'a', location: 'b', publish_pass: 'p' }] };
+  assert.throws(() => addDevice(reg, { id: 'pi-01', name: 'x', location: 'y' }), /exists/);
+});
+
+test('addDevice rejects invalid id', () => {
+  const reg = { devices: [] };
+  assert.throws(() => addDevice(reg, { id: 'Bad Id', name: 'x', location: 'y' }), /invalid/i);
+});
+
+test('ensureReadUser fills missing read credentials', () => {
+  const reg = { devices: [] };
+  ensureReadUser(reg);
+  assert.ok(reg.read_user);
+  assert.ok(reg.read_pass.length >= 24);
+});
