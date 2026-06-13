@@ -1,0 +1,117 @@
+# FPV Video Stream — Server
+
+Server side for multi-node FPV video surveillance: MediaMTX ingests H.264 from Raspberry Pi 5
+nodes over WireGuard; a Node/Express dashboard shows all streams in a live WebRTC grid with
+online/offline status. Everything is reachable only over WireGuard.
+
+## Architecture
+
+```
+Pi (10.8.0.x) --H.264--> MediaMTX (10.8.0.1)  --WHEP--> Browser (wg-easy client)
+   ffmpeg x264                RTSP :8554 / SRT :8890 ingest
+                              WebRTC :8889 + ICE :8189
+                              Control API 127.0.0.1:9997  <-- dashboard polls (read-only)
+                          Dashboard :8080 (10.8.0.1)
+```
+
+`devices.yml` is the single source of truth. `mediamtx.yml` is generated from it
+(`node bin/gen-mediamtx.js`); each device gets its own publish user, so a compromised node
+cannot read or publish other streams.
+
+## Install (Ubuntu 22.04/24.04, root)
+
+```bash
+git clone https://github.com/AndriyYaremenko/fpv-video-stream.git
+cd fpv-video-stream
+sudo WG_IP=10.8.0.1 WG_IFACE=wg0 ./install.sh
+```
+
+The installer is idempotent and **does not touch wg-easy/WireGuard**. It installs MediaMTX +
+Node, generates `.env` and `devices.yml` (from examples) on first run, renders the config, and
+starts both systemd services. Review `.env` afterwards (set `DASH_USER` / `DASH_PASS`).
+
+## Add a new node
+
+```bash
+sudo ./add-device.sh pi-03 "Garage" "Compound — South"
+```
+
+This generates credentials, updates `devices.yml`, regenerates `mediamtx.yml`, reloads MediaMTX,
+and prints the exact Pi push command. No main-config editing required.
+
+## Pi 5 push command (software x264 — Pi 5 has no hardware H.264 encoder)
+
+RTSP (printed by add-device.sh, with real credentials filled in):
+
+```bash
+ffmpeg -f v4l2 -framerate 30 -video_size 720x576 -i /dev/video0 \
+  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+  -g 30 -b:v 2M -maxrate 2M -bufsize 2M \
+  -f rtsp -rtsp_transport tcp \
+  "rtsp://<device-id>:<publish_pass>@10.8.0.1:8554/<device-id>"
+```
+
+SRT alternative (lower jitter on lossy links):
+
+```bash
+ffmpeg -f v4l2 -framerate 30 -video_size 720x576 -i /dev/video0 \
+  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+  -g 30 -b:v 2M -maxrate 2M -bufsize 2M -f mpegts \
+  "srt://10.8.0.1:8890?streamid=#!::m=publish,r=<device-id>,u=<device-id>,s=<publish_pass>&latency=200000&pkt_size=1316"
+```
+
+On the Pi, wrap this command in a `systemd` service with `Restart=always` so it auto-reconnects after
+reboots or link drops (Pi-side setup is out of scope for this server repo).
+
+## Access the dashboard
+
+Operators connect as a wg-easy WireGuard client, then browse to `http://10.8.0.1:8080` and log in
+with `DASH_USER` / `DASH_PASS` from `.env`.
+
+## Ports & interfaces
+
+| Port | Proto | Service | Bind |
+|---|---|---|---|
+| 8554 | tcp | RTSP ingest | 10.8.0.1 (WG) |
+| 8890 | udp | SRT ingest | 10.8.0.1 (WG) |
+| 8889 | tcp | WebRTC/WHEP | 10.8.0.1 (WG) |
+| 8189 | udp | WebRTC ICE | advertises 10.8.0.1 |
+| 9997 | tcp | Control API | 127.0.0.1 only |
+| 8080 | tcp | Dashboard | 10.8.0.1 (WG) |
+
+WireGuard handshake (wg-easy) is the only public-facing port. Optional `ufw` rules are printed at
+the end of `install.sh` — allow the above only on `wg0`.
+
+## Telemetry hook (optional, stubbed)
+
+Pi (or any WG client) can POST JSON to `http://10.8.0.1:8080/api/telemetry/<device-id>`:
+
+```bash
+curl -X POST http://10.8.0.1:8080/api/telemetry/pi-01 \
+  -H 'Content-Type: application/json' -d '{"rssi":-58,"freq":"5.8G","alarm":false}'
+```
+
+The latest payload shows on the device tile. Set `TELEMETRY_TOKEN` in `.env` to require
+`Authorization: Bearer <token>`. No live source is wired yet — this is a ready hook.
+
+## Public TLS access (later, optional)
+
+Not enabled in this iteration. To expose the dashboard publicly, put Caddy (automatic TLS) in front
+of `127.0.0.1:8080` with a login, point a domain at the server's public IP, open 80/443, and keep
+the MediaMTX control API internal. The dashboard already runs behind a login.
+
+## Operations
+
+```bash
+systemctl status mediamtx fpv-dashboard
+journalctl -u mediamtx -f
+journalctl -u fpv-dashboard -f
+node bin/gen-mediamtx.js && systemctl reload mediamtx   # after manual devices.yml edits
+```
+
+## Development / tests
+
+```bash
+npm install
+npm test          # node --test over lib/ and dashboard/
+```
