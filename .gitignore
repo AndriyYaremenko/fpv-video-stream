@@ -1,0 +1,6 @@
+# secrets / runtime
+devices.yml
+.env
+mediamtx.yml
+node_modules/
+*.log
