@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { genSecret, addDevice, ensureReadUser, validateId } from '../lib/registry.js';
+import { genSecret, addDevice, ensureReadUser, ensurePublishSecrets, validateId } from '../lib/registry.js';
 
 test('genSecret returns a long url-safe token', () => {
   const s = genSecret();
@@ -42,4 +42,17 @@ test('ensureReadUser fills missing read credentials', () => {
   ensureReadUser(reg);
   assert.ok(reg.read_user);
   assert.ok(reg.read_pass.length >= 24);
+});
+
+test('ensurePublishSecrets rotates placeholder/missing publish passwords, leaves real ones', () => {
+  const reg = { devices: [
+    { id: 'pi-01', publish_pass: 'CHANGE_ME_PI01' },
+    { id: 'pi-02', publish_pass: 'aRealStrongPassword123456' },
+    { id: 'pi-03' },
+  ] };
+  ensurePublishSecrets(reg);
+  assert.doesNotMatch(reg.devices[0].publish_pass, /^CHANGE_ME/);
+  assert.ok(reg.devices[0].publish_pass.length >= 24);
+  assert.equal(reg.devices[1].publish_pass, 'aRealStrongPassword123456'); // untouched
+  assert.ok(reg.devices[2].publish_pass.length >= 24);                    // filled in
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/gen-mediamtx.js — render mediamtx.yml from the device registry.
 import { writeFileSync } from 'node:fs';
-import { loadRegistry, ensureReadUser, saveRegistry } from '../lib/registry.js';
+import { loadRegistry, ensureReadUser, ensurePublishSecrets, saveRegistry } from '../lib/registry.js';
 import { renderConfig } from '../lib/render-config.js';
 
 const env = process.env;
@@ -9,10 +9,11 @@ const devicesFile = env.DEVICES_FILE || 'devices.yml';
 const outFile = env.MEDIAMTX_CONFIG || 'mediamtx.yml';
 
 const reg = loadRegistry(devicesFile);
-// Backfill read creds if the operator left placeholders; persist so they're stable.
-const before = reg.read_pass;
+// Backfill read + per-device publish creds if placeholders/missing; persist so they're stable.
+const before = JSON.stringify([reg.read_pass, ...reg.devices.map((d) => d.publish_pass)]);
 ensureReadUser(reg);
-if (reg.read_pass !== before) saveRegistry(devicesFile, reg);
+ensurePublishSecrets(reg);
+if (JSON.stringify([reg.read_pass, ...reg.devices.map((d) => d.publish_pass)]) !== before) saveRegistry(devicesFile, reg);
 
 const opts = {
   wgIp: env.WG_IP || '10.8.0.1',

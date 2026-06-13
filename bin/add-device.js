@@ -2,7 +2,7 @@
 // bin/add-device.js — add a device, regenerate config, reload MediaMTX, print push commands.
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { loadRegistry, saveRegistry, ensureReadUser, addDevice } from '../lib/registry.js';
+import { loadRegistry, saveRegistry, ensureReadUser, ensurePublishSecrets, addDevice } from '../lib/registry.js';
 import { renderConfig } from '../lib/render-config.js';
 import { buildRtspPush, buildSrtPush } from '../lib/push-command.js';
 
@@ -19,6 +19,7 @@ const wgIp = env.WG_IP || '10.8.0.1';
 
 const reg = loadRegistry(devicesFile);
 ensureReadUser(reg);
+ensurePublishSecrets(reg);
 let device;
 try {
   device = addDevice(reg, { id, name, location });
