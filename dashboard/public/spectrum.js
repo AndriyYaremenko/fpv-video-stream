@@ -151,8 +151,8 @@ function detectionTable(dets) {
       <td>${escapeHtml(d.band)}</td>
       <td>${freq}</td>
       <td><span class="cls" style="color:${classColor(d.class)}">${escapeHtml(d.class)}</span></td>
-      <td>${d.power_dbm ?? '—'} dBm</td>
-      <td>${d.bandwidth_mhz ?? '—'} МГц</td>
+      <td>${d.power_dbm == null ? '—' : escapeHtml(String(d.power_dbm))} dBm</td>
+      <td>${d.bandwidth_mhz == null ? '—' : escapeHtml(String(d.bandwidth_mhz))} МГц</td>
       <td>${fmtPct(d.confidence)}</td>`));
   }
   table.appendChild(tb);
