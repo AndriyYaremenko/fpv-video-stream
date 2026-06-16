@@ -13,6 +13,7 @@ from dweller import compute_features, dwell_live, dwell_replay
 from classifier import classify
 from channel_map import nearest_channel
 from reporter import build_payload, write_state, post_telemetry, Holder, make_local_server
+from device import reset_hackrf
 from models import Spectrum, Candidate, Detection
 
 LOG = logging.getLogger("scan")
@@ -106,6 +107,13 @@ def main() -> None:
             backoff = 1.0
         except Exception:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
+            # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF
+            # wedged on flaky USB hosts; re-enumerate it so the next cycle starts clean.
+            if cfg.source == "live":
+                try:
+                    reset_hackrf()
+                except Exception:
+                    LOG.exception("device reset failed")
             time.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
             continue
