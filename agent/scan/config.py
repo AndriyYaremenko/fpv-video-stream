@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
@@ -35,7 +36,6 @@ class Config:
 
 
 def load_config(env: Optional[dict] = None) -> Config:
-    import os
     env = os.environ if env is None else env
     c = Config()
     c.scanner_id = env.get("SCAN_ID", c.scanner_id)
