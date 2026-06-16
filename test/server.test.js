@@ -233,3 +233,17 @@ test('scanner online is derived from telemetry freshness', async () => {
   assert.equal(scan.bitrateKbps, null);
   server.close();
 });
+
+test('scanner freshness window is configurable (stale telemetry -> offline)', async () => {
+  const reg = { read_user: 'viewer', read_pass: 'rpw',
+    devices: [{ id: 'scan-01', name: 'S', location: '', kind: 'scanner', publish_pass: 'p' }] };
+  const { server, base } = await startWith(reg, { ...config, scannerFreshMs: 1 }); // 1ms window
+  const cookie = await login(base);
+  await fetch(`${base}/api/telemetry/scan-01`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ detections: [] }),
+  });
+  await new Promise((r) => setTimeout(r, 25)); // exceed the 1ms freshness window
+  const body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
+  assert.equal(body.find((d) => d.id === 'scan-01').online, false); // stale -> offline
+  server.close();
+});

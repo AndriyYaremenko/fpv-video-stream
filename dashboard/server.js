@@ -23,7 +23,10 @@ export function createApp({ registry, getPaths, config }) {
   // In-memory state: last telemetry payload + last byte sample per device (for bitrate).
   const telemetry = new Map();
   const samples = new Map();
-  const SCANNER_FRESH_MS = 15000; // a scanner is "online" if it posted telemetry within this window
+  // A scanner is "online" if it posted telemetry within this window. Generous by default:
+  // a multi-band scan cycle (and the HackRF recovery/backoff on flaky USB) can pause posting
+  // for tens of seconds, which would otherwise flap the tile offline. Override via SCANNER_FRESH_MS.
+  const SCANNER_FRESH_MS = config.scannerFreshMs || 60000;
 
   const requireAuth = (req, res, next) => {
     if (req.session?.authed) return next();
@@ -194,6 +197,7 @@ export async function start() {
     readPass: registry.read_pass,
     telemetryToken: env.TELEMETRY_TOKEN || '',
     pollIntervalMs: Number(env.POLL_INTERVAL_MS || 2000),
+    scannerFreshMs: Number(env.SCANNER_FRESH_MS || 60000),
     pushOpts: {
       wgIp: renderOpts.wgIp,
       rtspPort: renderOpts.rtspPort,
