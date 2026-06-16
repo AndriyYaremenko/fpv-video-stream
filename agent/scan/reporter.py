@@ -1,6 +1,5 @@
 import json
 import os
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List
 
