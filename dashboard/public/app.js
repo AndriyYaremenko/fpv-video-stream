@@ -1,10 +1,12 @@
 // dashboard/public/app.js — grid render, WHEP players, device management (add/delete/creds), tile sizing.
 import { startWhep } from '/whep.js';
+import { splitByKind, renderSpectrum } from '/spectrum.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
 const lastById = new Map(); // id -> latest device snapshot (for restart + edit prefill)
 const grid = document.getElementById('grid');
+const spectrumPanel = document.getElementById('spectrum-panel');
 
 // ---- tile size (persisted) ----
 const sizeInput = document.getElementById('tile-size');
@@ -96,12 +98,16 @@ function tileEl(d) {
 }
 
 function render(devices) {
-  document.getElementById('summary').textContent =
-    `${devices.filter((d) => d.online).length}/${devices.length} онлайн`;
+  const { cameras, scanners } = splitByKind(devices);
+  for (const d of devices) lastById.set(d.id, d);
 
-  for (const d of devices) {
+  document.getElementById('summary').textContent =
+    `${cameras.filter((d) => d.online).length}/${cameras.length} онлайн`;
+
+  renderSpectrumPanel(scanners);
+
+  for (const d of cameras) {
     const el = tileEl(d);
-    lastById.set(d.id, d);
     el.querySelector('.tile-meta strong').textContent = d.name;     // reflect edits
     el.querySelector('.tile-meta small').textContent = d.location;
     el.classList.toggle('offline', !d.online);
@@ -122,8 +128,8 @@ function render(devices) {
     }
   }
 
-  // Drop tiles for devices that no longer exist (e.g. deleted).
-  const ids = new Set(devices.map((d) => d.id));
+  // Drop tiles for cameras that no longer exist (e.g. deleted or converted).
+  const ids = new Set(cameras.map((d) => d.id));
   for (const el of grid.querySelectorAll('.tile')) {
     const id = el.id.replace('tile-', '');
     if (!ids.has(id)) {
@@ -134,6 +140,16 @@ function render(devices) {
       el.remove();
     }
   }
+}
+
+function renderSpectrumPanel(scanners) {
+  if (!scanners.length) {
+    spectrumPanel.classList.add('hidden');
+    spectrumPanel.innerHTML = '';
+    return;
+  }
+  spectrumPanel.classList.remove('hidden');
+  renderSpectrum(spectrumPanel, scanners);
 }
 
 async function startPlayer(d) {

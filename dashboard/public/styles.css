@@ -64,3 +64,28 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .login-card input { padding:.6rem; border-radius:6px; border:1px solid var(--line); background:#0e1116; color:var(--text); }
 .login-card button { padding:.6rem; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer; }
 .login-card .err { color:#f87171; font-size:.8rem; min-height:1em; margin:0; }
+
+/* spectrum panel (scanner data) */
+.spectrum-panel { margin:.6rem; padding:.7rem; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+.spectrum-panel.hidden { display:none; }
+.scan-block { padding:.4rem 0; border-bottom:1px solid var(--line); }
+.scan-block:last-child { border-bottom:none; }
+.scan-head { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.scan-head strong { font-size:.95rem; }
+.scan-head small { color:#9aa4b2; }
+.scan-actions { display:flex; gap:.3rem; margin-left:auto; }
+.scan-empty { color:#9aa4b2; font-size:.85rem; margin:.4rem 0; }
+.scan-occ { display:flex; gap:1rem; flex-wrap:wrap; margin:.5rem 0; }
+.occ-bar { display:flex; align-items:center; gap:.4rem; font-size:.75rem; color:#cbd5e1; }
+.occ-label { width:2.6rem; }
+.occ-track { width:90px; height:8px; background:#0b0e13; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+.occ-fill { display:block; height:100%; background:var(--accent); }
+.occ-val { width:2.4rem; text-align:right; }
+.scan-charts { display:flex; gap:.8rem; flex-wrap:wrap; margin:.4rem 0; }
+.band-chart { display:flex; flex-direction:column; gap:.2rem; }
+.band-label { font-size:.7rem; color:#9aa4b2; }
+.chart-canvas { background:#0b0e13; border:1px solid var(--line); border-radius:6px; }
+.scan-table { width:100%; border-collapse:collapse; font-size:.78rem; margin-top:.4rem; }
+.scan-table th, .scan-table td { text-align:left; padding:.25rem .5rem; border-bottom:1px solid var(--line); }
+.scan-table th { color:#9aa4b2; font-weight:600; }
+.scan-table .cls { font-weight:700; }
