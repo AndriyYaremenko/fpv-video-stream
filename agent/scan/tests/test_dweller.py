@@ -7,7 +7,7 @@ def test_iq_from_int8_decodes_pairs():
     raw = bytes([127, 0, 0, 127])          # I,Q interleaved int8
     iq = iq_from_int8(raw)
     assert iq.shape == (2,)
-    assert abs(iq[0] - (127 / 128.0)) < 1e-6
+    assert abs(iq[0].real - (127 / 128.0)) < 1e-6
     assert abs(iq[1].imag - (127 / 128.0)) < 1e-6
 
 
@@ -27,5 +27,5 @@ def test_features_noise_is_flat():
     rng = np.random.default_rng(0)
     noise = rng.standard_normal(n) + 1j * rng.standard_normal(n)
     f = compute_features(noise, fs)
-    assert f.spectral_flatness > 0.25        # noise-like
+    assert 0.25 < f.spectral_flatness <= 1.0   # noise-like, bounded by AM-GM
     assert f.carrier_spike_ratio < 50.0
