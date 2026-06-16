@@ -173,6 +173,19 @@ hackrf_sweep -f 2370:2510 -w 100000 -1 > tests/fixtures/sweep_2.4G.csv
 hackrf_transfer -r tests/fixtures/iq_2.4G.bin -f 2440000000 -s 20000000 -n 2000000 -a 1
 ```
 
+### Show a scanner on the dashboard
+
+Register the scanner as a **scanner-kind** device so the dashboard renders a "Spectrum" panel
+(occupancy bars, per-band spectrum charts, detection table) instead of a video tile:
+
+- In the dashboard, **➕ Додати вузол** → set **Тип: Сканер (HackRF)** and an id (e.g. `scan-01`).
+- Use that id as `SCAN_ID` for the Pi `fpv-scan` service. The scanner posts to
+  `/api/telemetry/<id>`; the dashboard marks it online while telemetry stays fresh (~15 s).
+
+Scanner devices are excluded from `mediamtx.yml` (they never publish video). To preview the panel
+locally without a HackRF, run the scan service in replay mode (see above) pointing `SCAN_SERVER_URL`
+at the dashboard.
+
 ## Public TLS access (later, optional)
 
 Not enabled in this iteration. To expose the dashboard publicly, put Caddy (automatic TLS) in front
