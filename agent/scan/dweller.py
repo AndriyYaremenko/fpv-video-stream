@@ -62,6 +62,7 @@ def compute_features(iq: np.ndarray, sample_rate_hz: float) -> Features:
 
 
 def build_transfer_cmd(center_hz: float, sample_rate_hz: float, num_samples: int, out_path: str) -> list:
+    """center_hz is in Hz (note: build_sweep_cmd takes MHz)."""
     return [
         "hackrf_transfer",
         "-r", out_path,
@@ -77,9 +78,18 @@ def dwell_live(center_mhz: float, sample_rate_hz: float, num_samples: int, timeo
     os.close(fd)
     try:
         cmd = build_transfer_cmd(center_mhz * 1e6, sample_rate_hz, num_samples, path)
-        subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.decode(errors="replace") if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or "")
+            raise RuntimeError(f"hackrf_transfer failed (exit {e.returncode}): {stderr}") from e
         with open(path, "rb") as f:
             raw = f.read()
+        if not raw:
+            raise RuntimeError("hackrf_transfer captured 0 bytes")
         return iq_from_int8(raw)
     finally:
-        os.unlink(path)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass

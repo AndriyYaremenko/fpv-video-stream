@@ -43,5 +43,8 @@ def build_sweep_cmd(low_mhz: float, high_mhz: float, bin_hz: float) -> list:
 
 def sweep_live(low_mhz: float, high_mhz: float, bin_hz: float, timeout: float = 15.0) -> list:
     cmd = build_sweep_cmd(low_mhz, high_mhz, bin_hz)
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"hackrf_sweep failed (exit {e.returncode}): {e.stderr or ''}") from e
     return proc.stdout.splitlines()
