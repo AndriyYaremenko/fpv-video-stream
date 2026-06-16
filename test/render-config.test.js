@@ -67,3 +67,16 @@ test('renderConfig produces parseable YAML matching the object', () => {
   assert.equal(parsed.rtspAddress, '10.8.0.1:8554');
   assert.equal(parsed.authInternalUsers.length, 4); // api + reader + 2 devices
 });
+
+test('scanner devices get no publish user in MediaMTX config', () => {
+  const regWithScanner = {
+    read_user: 'viewer', read_pass: 'readsecret',
+    devices: [
+      { id: 'pi-01', name: 'A', location: 'x', kind: 'camera', publish_pass: 'p1' },
+      { id: 'scan-01', name: 'S', location: 'z', kind: 'scanner', publish_pass: 'ps' },
+    ],
+  };
+  const c = buildConfigObject(regWithScanner, opts);
+  assert.ok(c.authInternalUsers.find((u) => u.user === 'pi-01'));
+  assert.equal(c.authInternalUsers.find((u) => u.user === 'scan-01'), undefined);
+});
