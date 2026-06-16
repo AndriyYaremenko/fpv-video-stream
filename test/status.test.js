@@ -42,3 +42,13 @@ test('computeBitrateKbps divides byte delta by time delta', () => {
   assert.equal(computeBitrateKbps(null, null, 100, 1000), null);
   assert.equal(computeBitrateKbps(100, 1000, 100, 1000), null);
 });
+
+test('mergeStatus passes through kind, defaulting missing to camera', () => {
+  const r = { devices: [
+    { id: 'pi-01', name: 'A', location: 'x' },
+    { id: 'scan-01', name: 'S', location: 'z', kind: 'scanner' },
+  ] };
+  const out = mergeStatus(r, pathsList, now);
+  assert.equal(out.find((d) => d.id === 'pi-01').kind, 'camera');
+  assert.equal(out.find((d) => d.id === 'scan-01').kind, 'scanner');
+});
