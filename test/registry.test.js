@@ -82,3 +82,16 @@ test('updateDevice changes name/location (partial), throws if missing', () => {
   assert.equal(reg.devices[0].publish_pass, 'p');        // pass never changes
   assert.throws(() => updateDevice(reg, 'nope', { name: 'z' }), /not found/);
 });
+
+test('addDevice defaults kind to camera and stores an explicit scanner kind', () => {
+  const reg = { devices: [] };
+  const cam = addDevice(reg, { id: 'cam-1', name: 'Cam' });
+  assert.equal(cam.kind, 'camera');
+  const scan = addDevice(reg, { id: 'scan-01', name: 'Scanner', kind: 'scanner' });
+  assert.equal(scan.kind, 'scanner');
+});
+
+test('addDevice rejects an invalid kind', () => {
+  const reg = { devices: [] };
+  assert.throws(() => addDevice(reg, { id: 'x-1', name: 'x', kind: 'drone' }), /invalid kind/i);
+});
