@@ -16,6 +16,8 @@ def test_build_payload_shape():
     assert p["scanner_id"] == "scan-01"
     assert p["detections"][0]["class"] == "analog"
     assert p["occupancy"]["5.8G"] == 0.5
+    assert p["ts"] == 1718530000
+    assert p["spectrum"] == {"5.8G": [-90.0]}
 
 
 def test_write_state_roundtrip(tmp_path):
