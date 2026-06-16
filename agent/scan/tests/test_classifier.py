@@ -10,17 +10,32 @@ def test_analog_signature():
     f = Features(occupied_bw_mhz=22.0, spectral_flatness=0.05, carrier_spike_ratio=200.0)
     cls, conf = classify(f, T)
     assert cls == "analog"
-    assert 0.0 < conf <= 1.0
+    assert 0.5 < conf <= 1.0
 
 
 def test_digital_signature():
     f = Features(occupied_bw_mhz=30.0, spectral_flatness=0.8, carrier_spike_ratio=5.0)
     cls, conf = classify(f, T)
     assert cls == "digital"
-    assert 0.0 < conf <= 1.0
+    assert 0.5 < conf <= 1.0
 
 
 def test_unknown_signature():
     f = Features(occupied_bw_mhz=3.0, spectral_flatness=0.3, carrier_spike_ratio=15.0)
     cls, conf = classify(f, T)
     assert cls == "unknown"
+    assert conf == 0.4
+
+
+def test_peaky_but_wrong_bandwidth_is_unknown():
+    # peaky + strong spike, but bandwidth outside the analog window -> unknown
+    f = Features(occupied_bw_mhz=5.0, spectral_flatness=0.05, carrier_spike_ratio=200.0)
+    cls, conf = classify(f, T)
+    assert cls == "unknown"
+
+
+def test_threshold_boundary_routes_to_digital():
+    # flatness == thresh and spike == thresh: analog uses strict </>, so this routes to digital
+    f = Features(occupied_bw_mhz=20.0, spectral_flatness=T.flatness_thresh, carrier_spike_ratio=T.spike_thresh)
+    cls, conf = classify(f, T)
+    assert cls == "digital"
