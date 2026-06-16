@@ -1,3 +1,7 @@
+import os
+import subprocess
+import tempfile
+
 import numpy as np
 
 from models import Features
@@ -55,3 +59,27 @@ def compute_features(iq: np.ndarray, sample_rate_hz: float) -> Features:
         spectral_flatness=flatness,
         carrier_spike_ratio=spike,
     )
+
+
+def build_transfer_cmd(center_hz: float, sample_rate_hz: float, num_samples: int, out_path: str) -> list:
+    return [
+        "hackrf_transfer",
+        "-r", out_path,
+        "-f", str(int(center_hz)),
+        "-s", str(int(sample_rate_hz)),
+        "-n", str(int(num_samples)),
+        "-a", "1",
+    ]
+
+
+def dwell_live(center_mhz: float, sample_rate_hz: float, num_samples: int, timeout: float = 15.0) -> np.ndarray:
+    fd, path = tempfile.mkstemp(suffix=".bin")
+    os.close(fd)
+    try:
+        cmd = build_transfer_cmd(center_mhz * 1e6, sample_rate_hz, num_samples, path)
+        subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
+        with open(path, "rb") as f:
+            raw = f.read()
+        return iq_from_int8(raw)
+    finally:
+        os.unlink(path)

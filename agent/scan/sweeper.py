@@ -1,3 +1,4 @@
+import subprocess
 from typing import Iterable, List
 
 import numpy as np
@@ -29,3 +30,18 @@ def parse_sweep_output(lines: Iterable[str], band: str) -> Spectrum:
     p = np.array(powers, dtype=float)
     order = np.argsort(f)
     return Spectrum(band=band, freqs_mhz=f[order], power_dbm=p[order])
+
+
+def build_sweep_cmd(low_mhz: float, high_mhz: float, bin_hz: float) -> list:
+    return [
+        "hackrf_sweep",
+        "-f", f"{int(low_mhz)}:{int(high_mhz)}",
+        "-w", str(int(bin_hz)),
+        "-1",
+    ]
+
+
+def sweep_live(low_mhz: float, high_mhz: float, bin_hz: float, timeout: float = 15.0) -> list:
+    cmd = build_sweep_cmd(low_mhz, high_mhz, bin_hz)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+    return proc.stdout.splitlines()
