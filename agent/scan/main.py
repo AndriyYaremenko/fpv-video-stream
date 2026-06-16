@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from typing import List
 
@@ -11,7 +12,7 @@ from detector import find_candidates
 from dweller import compute_features, dwell_live, dwell_replay
 from classifier import classify
 from channel_map import nearest_channel
-from reporter import build_payload, write_state, post_telemetry
+from reporter import build_payload, write_state, post_telemetry, Holder, make_local_server
 from models import Spectrum, Candidate, Detection
 
 LOG = logging.getLogger("scan")
@@ -92,10 +93,16 @@ def run_cycle(cfg: Config, now_ts: int) -> dict:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
+    holder = Holder()
+    if cfg.local_http_port:
+        server = make_local_server(cfg.local_http_host, cfg.local_http_port, holder)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        LOG.info("local JSON endpoint on http://%s:%d/", cfg.local_http_host, cfg.local_http_port)
     backoff = 1.0
     while True:
         try:
-            run_cycle(cfg, now_ts=int(time.time()))
+            payload = run_cycle(cfg, now_ts=int(time.time()))
+            holder.payload = payload
             backoff = 1.0
         except Exception:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)

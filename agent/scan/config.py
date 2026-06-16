@@ -27,6 +27,8 @@ class Config:
     dwell_num_samples: int = 2_000_000
     max_dwells_per_cycle: int = 12
     sweep_bin_hz: float = 100_000.0
+    local_http_host: str = "127.0.0.1"
+    local_http_port: int = 8077
     bands: Dict[str, Tuple[float, float]] = field(default_factory=lambda: {
         "1.2G": (1080.0, 1360.0),
         "2.4G": (2370.0, 2510.0),
@@ -44,4 +46,7 @@ def load_config(env: Optional[dict] = None) -> Config:
     c.source = env.get("SCAN_SOURCE", c.source)
     c.fixtures_dir = env.get("SCAN_FIXTURES_DIR", c.fixtures_dir)
     c.state_path = env.get("SCAN_STATE_PATH", c.state_path)
+    c.local_http_host = env.get("SCAN_HTTP_HOST", c.local_http_host)
+    if "SCAN_HTTP_PORT" in env:
+        c.local_http_port = int(env["SCAN_HTTP_PORT"])
     return c

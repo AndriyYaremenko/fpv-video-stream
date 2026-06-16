@@ -128,7 +128,7 @@ The latest payload shows on the device tile. Set `TELEMETRY_TOKEN` in `.env` to 
 
 A Pi-side daemon (`agent/scan/`) sweeps 1.2/2.4/5.8 GHz with a HackRF One, detects active video
 carriers, classifies analog vs digital, and POSTs detections to the dashboard telemetry hook
-(`/api/telemetry/<scanner-id>`) plus a local state file (`/run/fpv-scan/scan.json`). Analog
+(`/api/telemetry/<scanner-id>`) plus a local state file (`/run/fpv-scan/scan.json`) and a read-only local JSON endpoint at `http://127.0.0.1:8077/` (configurable via `SCAN_HTTP_PORT`) for on-Pi consumers. Analog
 detections are receivable on rx5808 (later sub-project); digital ones are flagged only.
 
 ### Install on the Pi
@@ -142,6 +142,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now fpv-scan
 journalctl -u fpv-scan -f
 ```
+
+> **Register the scanner id.** The dashboard telemetry hook only accepts known device ids, so add
+> the scanner (`scan-01`) as a device first — via the dashboard **➕ Додати вузол**, or
+> `sudo ./add-device.sh scan-01 "Spectrum scanner" "<site>"`. Otherwise POSTs return 404 and
+> detections never reach the dashboard (the local state file and JSON endpoint still work).
 
 ### Develop without a HackRF (replay mode)
 Synthetic fixtures for all three bands are committed under `tests/fixtures/`, so replay mode runs

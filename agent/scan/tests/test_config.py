@@ -24,3 +24,12 @@ def test_env_overrides():
     assert c.source == "replay"
     assert c.server_url == "http://10.0.0.2:9090"
     assert c.fixtures_dir == "/tmp/fx"
+
+
+def test_http_endpoint_config():
+    c = load_config({})
+    assert c.local_http_host == "127.0.0.1"
+    assert c.local_http_port == 8077
+    c2 = load_config({"SCAN_HTTP_PORT": "9099", "SCAN_HTTP_HOST": "0.0.0.0"})
+    assert c2.local_http_port == 9099
+    assert c2.local_http_host == "0.0.0.0"
