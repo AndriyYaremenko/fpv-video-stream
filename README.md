@@ -137,23 +137,36 @@ sudo apt-get install -y hackrf
 cd /opt/fpv-video-stream/agent/scan
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 hackrf_info                       # confirm the HackRF is detected
-sudo cp ../../systemd/fpv-scan.service /etc/systemd/system/
+sudo cp /opt/fpv-video-stream/systemd/fpv-scan.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl enable --now fpv-scan
 journalctl -u fpv-scan -f
 ```
 
 ### Develop without a HackRF (replay mode)
+Synthetic fixtures for all three bands are committed under `tests/fixtures/`, so replay mode runs
+out of the box. POST failures to an unreachable dashboard are non-fatal (the local state file is
+still written); point `SCAN_SERVER_URL` at a dummy to keep the logs quiet:
 ```bash
 SCAN_SOURCE=replay SCAN_FIXTURES_DIR=./tests/fixtures \
-  SCAN_STATE_PATH=./scan.json python main.py
+  SCAN_SERVER_URL=http://127.0.0.1:1 SCAN_STATE_PATH=./scan.json python main.py
 ```
+Regenerate the synthetic fixtures any time with `python tests/fixtures/generate_fixtures.py`.
 
 ### Record real fixtures on the Pi (for threshold tuning)
+Replace the synthetic fixtures with real captures for each band, then tune `Thresholds` in
+`config.py` and re-run `pytest`:
 ```bash
+# 5.8 GHz
 hackrf_sweep -f 5645:5945 -w 100000 -1 > tests/fixtures/sweep_5.8G.csv
 hackrf_transfer -r tests/fixtures/iq_5.8G.bin -f 5800000000 -s 20000000 -n 2000000 -a 1
+# 1.2 GHz
+hackrf_sweep -f 1080:1360 -w 100000 -1 > tests/fixtures/sweep_1.2G.csv
+hackrf_transfer -r tests/fixtures/iq_1.2G.bin -f 1200000000 -s 20000000 -n 2000000 -a 1
+# 2.4 GHz
+hackrf_sweep -f 2370:2510 -w 100000 -1 > tests/fixtures/sweep_2.4G.csv
+hackrf_transfer -r tests/fixtures/iq_2.4G.bin -f 2440000000 -s 20000000 -n 2000000 -a 1
 ```
-Then tune `Thresholds` in `config.py` against these captures and re-run `pytest`.
 
 ## Public TLS access (later, optional)
 
