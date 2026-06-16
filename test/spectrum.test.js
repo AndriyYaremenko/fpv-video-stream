@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitByKind, classColor, fmtPct, psdToPoints, detectionX, BAND_RANGES } from '../dashboard/public/spectrum.js';
+import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, BAND_RANGES } from '../dashboard/public/spectrum.js';
 
 test('splitByKind separates scanners from cameras (missing kind = camera)', () => {
   const { cameras, scanners } = splitByKind([
@@ -43,4 +43,9 @@ test('detectionX maps center freq within band and clamps out-of-range', () => {
 
 test('BAND_RANGES covers the three FPV bands', () => {
   assert.deepEqual(Object.keys(BAND_RANGES).sort(), ['1.2G', '2.4G', '5.8G']);
+});
+
+test('fmtFreq formats MHz with a Ukrainian unit and rounds', () => {
+  assert.equal(fmtFreq(5800), '5800 МГц');
+  assert.equal(fmtFreq(5800.4), '5800 МГц');
 });
