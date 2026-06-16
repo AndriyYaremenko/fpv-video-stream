@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { genSecret, addDevice, ensureReadUser, ensurePublishSecrets, validateId } from '../lib/registry.js';
+import { genSecret, addDevice, ensureReadUser, ensurePublishSecrets, validateId, nextDeviceId, removeDevice } from '../lib/registry.js';
 
 test('genSecret returns a long url-safe token', () => {
   const s = genSecret();
@@ -55,4 +55,18 @@ test('ensurePublishSecrets rotates placeholder/missing publish passwords, leaves
   assert.ok(reg.devices[0].publish_pass.length >= 24);
   assert.equal(reg.devices[1].publish_pass, 'aRealStrongPassword123456'); // untouched
   assert.ok(reg.devices[2].publish_pass.length >= 24);                    // filled in
+});
+
+test('nextDeviceId returns the first free pi-NN', () => {
+  assert.equal(nextDeviceId({ devices: [] }), 'pi-01');
+  assert.equal(nextDeviceId({ devices: [{ id: 'pi-01' }, { id: 'pi-02' }] }), 'pi-03');
+  assert.equal(nextDeviceId({ devices: [{ id: 'pi-02' }] }), 'pi-01'); // fills the gap
+});
+
+test('removeDevice removes and returns the device, throws if missing', () => {
+  const reg = { devices: [{ id: 'pi-01' }, { id: 'pi-02' }] };
+  const removed = removeDevice(reg, 'pi-01');
+  assert.equal(removed.id, 'pi-01');
+  assert.deepEqual(reg.devices.map((d) => d.id), ['pi-02']);
+  assert.throws(() => removeDevice(reg, 'nope'), /not found/);
 });

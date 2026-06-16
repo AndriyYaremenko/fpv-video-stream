@@ -47,10 +47,17 @@ docker compose up -d --build
 ```
 
 Prereqs: the WireGuard container must be named `wg-easy`. The dashboard is then reachable at
-`http://10.8.0.1:8080` from any WireGuard client. Add nodes with
-`./compose-add-device.sh <id> "<name>" "<location>"` (regenerates the config and restarts
-mediamtx + dashboard). Note: if the `wg-easy` container is recreated, restart these services
-(`docker compose restart mediamtx dashboard`) so they re-attach to the new namespace.
+`http://10.8.0.1:8080` from any WireGuard client. Note: if the `wg-easy` container is recreated,
+restart these services (`docker compose restart mediamtx dashboard`) so they re-attach to the
+new namespace.
+
+**Manage nodes from the dashboard:** the web UI has **➕ Додати вузол** to create a node
+(device id optional — auto-generated as `pi-NN` if blank); it shows the publish password and the
+ready-to-paste RTSP/SRT push command. Each tile has 🔑 (re-show creds/push command) and 🗑
+(delete). MediaMTX hot-reloads its config on every change — no restart needed. WireGuard on the Pi
+is still set up manually (e.g. via the wg-easy UI). The **▭ slider** in the top bar resizes the
+video tiles (persisted per browser). The `./compose-add-device.sh` CLI remains available as an
+alternative to the web UI.
 
 ## Add a new node
 

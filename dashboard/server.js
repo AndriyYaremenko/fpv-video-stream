@@ -1,8 +1,13 @@
 import express from 'express';
 import cookieSession from 'cookie-session';
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mergeStatus, computeBitrateKbps } from '../lib/status.js';
+import { addDevice, removeDevice, nextDeviceId, saveRegistry, loadRegistry, ensureReadUser } from '../lib/registry.js';
+import { renderConfig } from '../lib/render-config.js';
+import { buildRtspPush, buildSrtPush } from '../lib/push-command.js';
+import { fetchPaths } from '../lib/mtx-api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +83,45 @@ export function createApp({ registry, getPaths, config }) {
     }
   });
 
+  // ---- device management: create / fetch creds / delete ----
+  // config.persistRegistry(reg) writes devices.yml AND regenerates mediamtx.yml;
+  // MediaMTX hot-reloads the config file, so no restart is needed.
+  const pushFor = (device) => ({
+    rtsp: buildRtspPush(device, config.pushOpts),
+    srt: buildSrtPush(device, config.pushOpts),
+  });
+
+  app.post('/api/devices', requireAuth, (req, res) => {
+    const { id, name, location } = req.body || {};
+    try {
+      const finalId = (id && String(id).trim()) ? String(id).trim() : nextDeviceId(registry);
+      const device = addDevice(registry, { id: finalId, name, location });
+      config.persistRegistry(registry);
+      res.status(201).json({ device, push: pushFor(device) });
+    } catch (e) {
+      const code = /already exists/.test(e.message) ? 409 : 400;
+      res.status(code).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/devices/:id/push', requireAuth, (req, res) => {
+    const device = (registry.devices || []).find((d) => d.id === req.params.id);
+    if (!device) return res.status(404).json({ error: 'unknown device' });
+    res.json({ device, push: pushFor(device) });
+  });
+
+  app.delete('/api/devices/:id', requireAuth, (req, res) => {
+    try {
+      removeDevice(registry, req.params.id);
+      telemetry.delete(req.params.id);
+      samples.delete(req.params.id);
+      config.persistRegistry(registry);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(404).json({ error: e.message });
+    }
+  });
+
   // ---- SSE stream of status diffs ----
   app.get('/api/stream', requireAuth, (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -104,12 +148,21 @@ export function createApp({ registry, getPaths, config }) {
 
 // ---- production entrypoint ----
 export async function start() {
-  const { loadRegistry, ensureReadUser } = await import('../lib/registry.js');
-  const { fetchPaths } = await import('../lib/mtx-api.js');
   const env = process.env;
-  const registry = loadRegistry(env.DEVICES_FILE || 'devices.yml');
+  const devicesFile = env.DEVICES_FILE || 'devices.yml';
+  const mediamtxConfig = env.MEDIAMTX_CONFIG || 'mediamtx.yml';
+  const registry = loadRegistry(devicesFile);
   ensureReadUser(registry);
   const apiBase = env.MTX_API_BASE || 'http://127.0.0.1:9997';
+  const renderOpts = {
+    wgIp: env.WG_IP || '10.8.0.1',
+    rtspPort: Number(env.RTSP_PORT || 8554),
+    srtPort: Number(env.SRT_PORT || 8890),
+    webrtcPort: Number(env.WEBRTC_PORT || 8889),
+    iceUdpPort: Number(env.ICE_UDP_PORT || 8189),
+    apiHost: env.API_HOST || '127.0.0.1',
+    apiPort: Number(env.API_PORT || 9997),
+  };
   const config = {
     dashUser: env.DASH_USER || 'operator',
     dashPass: env.DASH_PASS || 'change-me-now',
@@ -119,6 +172,20 @@ export async function start() {
     readPass: registry.read_pass,
     telemetryToken: env.TELEMETRY_TOKEN || '',
     pollIntervalMs: Number(env.POLL_INTERVAL_MS || 2000),
+    pushOpts: {
+      wgIp: renderOpts.wgIp,
+      rtspPort: renderOpts.rtspPort,
+      srtPort: renderOpts.srtPort,
+      videoDevice: env.PI_VIDEO_DEVICE || '/dev/video0',
+      framerate: Number(env.PI_FRAMERATE || 30),
+      videoSize: env.PI_VIDEO_SIZE || '720x576',
+      bitrate: env.PI_BITRATE || '2M',
+    },
+    // Persist registry + regenerate MediaMTX config (MediaMTX hot-reloads the file).
+    persistRegistry: (reg) => {
+      saveRegistry(devicesFile, reg);
+      writeFileSync(mediamtxConfig, renderConfig(reg, renderOpts), 'utf8');
+    },
   };
   const app = createApp({ registry, getPaths: () => fetchPaths(apiBase), config });
   const host = env.DASH_HOST || '10.8.0.1';

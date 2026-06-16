@@ -49,9 +49,13 @@ services:
     env_file: .env
     environment:
       DEVICES_FILE: /app/devices.yml
+      MEDIAMTX_CONFIG: /runtime/mediamtx.yml
       MTX_API_BASE: http://127.0.0.1:9997
     volumes:
-      - ./devices.yml:/app/devices.yml:ro
+      # rw: the dashboard adds/removes devices (writes devices.yml) and regenerates
+      # mediamtx.yml into ./runtime, which MediaMTX hot-reloads.
+      - ./devices.yml:/app/devices.yml
+      - ./runtime:/runtime
     depends_on:
       - mediamtx
     restart: unless-stopped

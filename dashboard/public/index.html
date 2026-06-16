@@ -10,15 +10,31 @@
   <header class="topbar">
     <h1>FPV Відеоспостереження</h1>
     <span id="summary" class="summary"></span>
+    <label class="size-ctl" title="Розмір вікон">
+      <span aria-hidden="true">▭</span>
+      <input type="range" id="tile-size" min="240" max="720" step="20" />
+    </label>
+    <button id="add-device" class="btn-primary">➕ Додати вузол</button>
     <button id="logout">Вийти</button>
   </header>
+
   <main id="grid" class="grid" aria-live="polite"></main>
+
+  <!-- Fullscreen video viewer -->
   <div id="modal" class="modal hidden">
     <button id="modal-close" class="modal-close">✕</button>
     <video id="modal-video" autoplay playsinline muted></video>
     <div id="modal-caption" class="modal-caption"></div>
   </div>
-  <script type="module" src="/whep.js"></script>
+
+  <!-- Reusable form / credentials modal -->
+  <div id="form-modal" class="modal2 hidden">
+    <div class="card">
+      <button class="card-close" data-close>✕</button>
+      <div id="form-modal-body"></div>
+    </div>
+  </div>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>
