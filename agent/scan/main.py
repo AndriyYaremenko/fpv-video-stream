@@ -23,7 +23,7 @@ def _get_spectrum(cfg: Config, band: str, brange) -> Spectrum:
     if cfg.source == "replay":
         path = os.path.join(cfg.fixtures_dir, f"sweep_{band}.csv")
         return sweep_replay(path, band)
-    lines = sweep_live(brange[0], brange[1], cfg.sweep_bin_hz)
+    lines = sweep_live(brange[0], brange[1], cfg.sweep_bin_hz, cfg.lna_gain, cfg.vga_gain, cfg.amp_enable)
     return parse_sweep_output(lines, band)
 
 
@@ -31,7 +31,8 @@ def _get_iq(cfg: Config, cand: Candidate) -> np.ndarray:
     if cfg.source == "replay":
         path = os.path.join(cfg.fixtures_dir, f"iq_{cand.band}.bin")
         return dwell_replay(path)
-    return dwell_live(cand.center_mhz, cfg.dwell_sample_rate_hz, cfg.dwell_num_samples)
+    return dwell_live(cand.center_mhz, cfg.dwell_sample_rate_hz, cfg.dwell_num_samples,
+                      cfg.lna_gain, cfg.vga_gain, cfg.amp_enable)
 
 
 def _occupancy(spec: Spectrum, cfg: Config) -> float:

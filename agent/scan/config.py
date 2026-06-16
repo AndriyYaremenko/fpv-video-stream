@@ -27,6 +27,9 @@ class Config:
     dwell_num_samples: int = 2_000_000
     max_dwells_per_cycle: int = 12
     sweep_bin_hz: float = 100_000.0
+    lna_gain: int = 40                          # RX LNA/IF gain, 0-40 dB (8 dB steps)
+    vga_gain: int = 20                          # RX VGA/baseband gain, 0-62 dB (2 dB steps)
+    amp_enable: int = 0                         # RF front-end amp, 0/1 (on risks overload near strong TX)
     local_http_host: str = "127.0.0.1"
     local_http_port: int = 8077
     bands: Dict[str, Tuple[float, float]] = field(default_factory=lambda: {
@@ -49,4 +52,10 @@ def load_config(env: Optional[dict] = None) -> Config:
     c.local_http_host = env.get("SCAN_HTTP_HOST", c.local_http_host)
     if "SCAN_HTTP_PORT" in env:
         c.local_http_port = int(env["SCAN_HTTP_PORT"])
+    if "SCAN_LNA" in env:
+        c.lna_gain = int(env["SCAN_LNA"])
+    if "SCAN_VGA" in env:
+        c.vga_gain = int(env["SCAN_VGA"])
+    if "SCAN_AMP" in env:
+        c.amp_enable = int(env["SCAN_AMP"])
     return c

@@ -32,17 +32,22 @@ def parse_sweep_output(lines: Iterable[str], band: str) -> Spectrum:
     return Spectrum(band=band, freqs_mhz=f[order], power_dbm=p[order])
 
 
-def build_sweep_cmd(low_mhz: float, high_mhz: float, bin_hz: float) -> list:
+def build_sweep_cmd(low_mhz: float, high_mhz: float, bin_hz: float,
+                    lna: int = 40, vga: int = 20, amp: int = 0) -> list:
     return [
         "hackrf_sweep",
         "-f", f"{int(low_mhz)}:{int(high_mhz)}",
         "-w", str(int(bin_hz)),
+        "-l", str(int(lna)),
+        "-g", str(int(vga)),
+        "-a", str(int(amp)),
         "-1",
     ]
 
 
-def sweep_live(low_mhz: float, high_mhz: float, bin_hz: float, timeout: float = 15.0) -> list:
-    cmd = build_sweep_cmd(low_mhz, high_mhz, bin_hz)
+def sweep_live(low_mhz: float, high_mhz: float, bin_hz: float,
+               lna: int = 40, vga: int = 20, amp: int = 0, timeout: float = 15.0) -> list:
+    cmd = build_sweep_cmd(low_mhz, high_mhz, bin_hz, lna, vga, amp)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
     except subprocess.CalledProcessError as e:

@@ -61,7 +61,8 @@ def compute_features(iq: np.ndarray, sample_rate_hz: float) -> Features:
     )
 
 
-def build_transfer_cmd(center_hz: float, sample_rate_hz: float, num_samples: int, out_path: str) -> list:
+def build_transfer_cmd(center_hz: float, sample_rate_hz: float, num_samples: int, out_path: str,
+                       lna: int = 40, vga: int = 20, amp: int = 0) -> list:
     """center_hz is in Hz (note: build_sweep_cmd takes MHz)."""
     return [
         "hackrf_transfer",
@@ -69,15 +70,18 @@ def build_transfer_cmd(center_hz: float, sample_rate_hz: float, num_samples: int
         "-f", str(int(center_hz)),
         "-s", str(int(sample_rate_hz)),
         "-n", str(int(num_samples)),
-        "-a", "1",
+        "-l", str(int(lna)),
+        "-g", str(int(vga)),
+        "-a", str(int(amp)),
     ]
 
 
-def dwell_live(center_mhz: float, sample_rate_hz: float, num_samples: int, timeout: float = 15.0) -> np.ndarray:
+def dwell_live(center_mhz: float, sample_rate_hz: float, num_samples: int,
+               lna: int = 40, vga: int = 20, amp: int = 0, timeout: float = 15.0) -> np.ndarray:
     fd, path = tempfile.mkstemp(suffix=".bin")
     os.close(fd)
     try:
-        cmd = build_transfer_cmd(center_mhz * 1e6, sample_rate_hz, num_samples, path)
+        cmd = build_transfer_cmd(center_mhz * 1e6, sample_rate_hz, num_samples, path, lna, vga, amp)
         try:
             subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
         except subprocess.CalledProcessError as e:

@@ -33,3 +33,14 @@ def test_http_endpoint_config():
     c2 = load_config({"SCAN_HTTP_PORT": "9099", "SCAN_HTTP_HOST": "0.0.0.0"})
     assert c2.local_http_port == 9099
     assert c2.local_http_host == "0.0.0.0"
+
+
+def test_rf_gain_config():
+    c = load_config({})
+    assert c.lna_gain == 40
+    assert c.vga_gain == 20
+    assert c.amp_enable == 0
+    c2 = load_config({"SCAN_LNA": "24", "SCAN_VGA": "16", "SCAN_AMP": "1"})
+    assert c2.lna_gain == 24
+    assert c2.vga_gain == 16
+    assert c2.amp_enable == 1
