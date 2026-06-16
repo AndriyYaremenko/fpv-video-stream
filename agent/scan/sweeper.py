@@ -48,3 +48,9 @@ def sweep_live(low_mhz: float, high_mhz: float, bin_hz: float, timeout: float = 
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"hackrf_sweep failed (exit {e.returncode}): {e.stderr or ''}") from e
     return proc.stdout.splitlines()
+
+
+def sweep_replay(csv_path: str, band: str) -> Spectrum:
+    with open(csv_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    return parse_sweep_output(lines, band)

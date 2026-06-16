@@ -93,3 +93,9 @@ def dwell_live(center_mhz: float, sample_rate_hz: float, num_samples: int, timeo
             os.unlink(path)
         except OSError:
             pass
+
+
+def dwell_replay(iq_path: str) -> np.ndarray:
+    with open(iq_path, "rb") as f:
+        raw = f.read()
+    return iq_from_int8(raw)
