@@ -124,6 +124,68 @@ curl -X POST http://10.8.0.1:8080/api/telemetry/pi-01 \
 The latest payload shows on the device tile. Set `TELEMETRY_TOKEN` in `.env` to require
 `Authorization: Bearer <token>`. No live source is wired yet — this is a ready hook.
 
+## Scan service (HackRF)
+
+A Pi-side daemon (`agent/scan/`) sweeps 1.2/2.4/5.8 GHz with a HackRF One, detects active video
+carriers, classifies analog vs digital, and POSTs detections to the dashboard telemetry hook
+(`/api/telemetry/<scanner-id>`) plus a local state file (`/run/fpv-scan/scan.json`) and a read-only local JSON endpoint at `http://127.0.0.1:8077/` (configurable via `SCAN_HTTP_PORT`) for on-Pi consumers. Analog
+detections are receivable on rx5808 (later sub-project); digital ones are flagged only.
+
+### Install on the Pi
+```bash
+sudo apt-get install -y hackrf
+cd /opt/fpv-video-stream/agent/scan
+python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+hackrf_info                       # confirm the HackRF is detected
+sudo cp /opt/fpv-video-stream/systemd/fpv-scan.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now fpv-scan
+journalctl -u fpv-scan -f
+```
+
+> **Register the scanner id.** The dashboard telemetry hook only accepts known device ids, so add
+> the scanner (`scan-01`) as a device first — via the dashboard **➕ Додати вузол**, or
+> `sudo ./add-device.sh scan-01 "Spectrum scanner" "<site>"`. Otherwise POSTs return 404 and
+> detections never reach the dashboard (the local state file and JSON endpoint still work).
+
+### Develop without a HackRF (replay mode)
+Synthetic fixtures for all three bands are committed under `tests/fixtures/`, so replay mode runs
+out of the box. POST failures to an unreachable dashboard are non-fatal (the local state file is
+still written); point `SCAN_SERVER_URL` at a dummy to keep the logs quiet:
+```bash
+SCAN_SOURCE=replay SCAN_FIXTURES_DIR=./tests/fixtures \
+  SCAN_SERVER_URL=http://127.0.0.1:1 SCAN_STATE_PATH=./scan.json python main.py
+```
+Regenerate the synthetic fixtures any time with `python tests/fixtures/generate_fixtures.py`.
+
+### Record real fixtures on the Pi (for threshold tuning)
+Replace the synthetic fixtures with real captures for each band, then tune `Thresholds` in
+`config.py` and re-run `pytest`:
+```bash
+# 5.8 GHz
+hackrf_sweep -f 5645:5945 -w 100000 -1 > tests/fixtures/sweep_5.8G.csv
+hackrf_transfer -r tests/fixtures/iq_5.8G.bin -f 5800000000 -s 20000000 -n 2000000 -a 1
+# 1.2 GHz
+hackrf_sweep -f 1080:1360 -w 100000 -1 > tests/fixtures/sweep_1.2G.csv
+hackrf_transfer -r tests/fixtures/iq_1.2G.bin -f 1200000000 -s 20000000 -n 2000000 -a 1
+# 2.4 GHz
+hackrf_sweep -f 2370:2510 -w 100000 -1 > tests/fixtures/sweep_2.4G.csv
+hackrf_transfer -r tests/fixtures/iq_2.4G.bin -f 2440000000 -s 20000000 -n 2000000 -a 1
+```
+
+### Show a scanner on the dashboard
+
+Register the scanner as a **scanner-kind** device so the dashboard renders a "Spectrum" panel
+(occupancy bars, per-band spectrum charts, detection table) instead of a video tile:
+
+- In the dashboard, **➕ Додати вузол** → set **Тип: Сканер (HackRF)** and an id (e.g. `scan-01`).
+- Use that id as `SCAN_ID` for the Pi `fpv-scan` service. The scanner posts to
+  `/api/telemetry/<id>`; the dashboard marks it online while telemetry stays fresh (~15 s).
+
+Scanner devices are excluded from `mediamtx.yml` (they never publish video). To preview the panel
+locally without a HackRF, run the scan service in replay mode (see above) pointing `SCAN_SERVER_URL`
+at the dashboard.
+
 ## Public TLS access (later, optional)
 
 Not enabled in this iteration. To expose the dashboard publicly, put Caddy (automatic TLS) in front

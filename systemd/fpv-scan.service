@@ -1,0 +1,19 @@
+[Unit]
+Description=FPV HackRF scan service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fpv-video-stream/agent/scan
+Environment=SCAN_ID=scan-01
+Environment=SCAN_SERVER_URL=http://10.8.0.1:8080
+Environment=SCAN_SOURCE=live
+Environment=SCAN_STATE_PATH=/run/fpv-scan/scan.json
+RuntimeDirectory=fpv-scan
+ExecStart=/opt/fpv-video-stream/agent/scan/.venv/bin/python -u main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

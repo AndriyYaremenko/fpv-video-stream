@@ -5,3 +5,4 @@ mediamtx.yml
 node_modules/
 *.log
 runtime/
+agent/scan/.venv/
