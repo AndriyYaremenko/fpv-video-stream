@@ -124,6 +124,37 @@ curl -X POST http://10.8.0.1:8080/api/telemetry/pi-01 \
 The latest payload shows on the device tile. Set `TELEMETRY_TOKEN` in `.env` to require
 `Authorization: Bearer <token>`. No live source is wired yet — this is a ready hook.
 
+## Scan service (HackRF)
+
+A Pi-side daemon (`agent/scan/`) sweeps 1.2/2.4/5.8 GHz with a HackRF One, detects active video
+carriers, classifies analog vs digital, and POSTs detections to the dashboard telemetry hook
+(`/api/telemetry/<scanner-id>`) plus a local state file (`/run/fpv-scan/scan.json`). Analog
+detections are receivable on rx5808 (later sub-project); digital ones are flagged only.
+
+### Install on the Pi
+```bash
+sudo apt-get install -y hackrf
+cd /opt/fpv-video-stream/agent/scan
+python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+hackrf_info                       # confirm the HackRF is detected
+sudo cp ../../systemd/fpv-scan.service /etc/systemd/system/
+sudo systemctl enable --now fpv-scan
+journalctl -u fpv-scan -f
+```
+
+### Develop without a HackRF (replay mode)
+```bash
+SCAN_SOURCE=replay SCAN_FIXTURES_DIR=./tests/fixtures \
+  SCAN_STATE_PATH=./scan.json python main.py
+```
+
+### Record real fixtures on the Pi (for threshold tuning)
+```bash
+hackrf_sweep -f 5645:5945 -w 100000 -1 > tests/fixtures/sweep_5.8G.csv
+hackrf_transfer -r tests/fixtures/iq_5.8G.bin -f 5800000000 -s 20000000 -n 2000000 -a 1
+```
+Then tune `Thresholds` in `config.py` against these captures and re-run `pytest`.
+
 ## Public TLS access (later, optional)
 
 Not enabled in this iteration. To expose the dashboard publicly, put Caddy (automatic TLS) in front
