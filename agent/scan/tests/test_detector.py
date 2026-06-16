@@ -36,3 +36,16 @@ def test_narrow_blip_below_min_bandwidth_is_ignored():
     power[(freqs >= 5800.0) & (freqs <= 5801.0)] = -40.0   # ~1 MHz
     spec = Spectrum(band="5.8G", freqs_mhz=freqs, power_dbm=power)
     assert find_candidates(spec, snr_threshold_db=20.0, min_bandwidth_mhz=5.0) == []
+
+
+def test_two_separate_carriers_yield_two_candidates():
+    freqs = np.arange(5645.0, 5945.0, 0.1)
+    power = np.full(freqs.shape, -90.0)
+    power[(freqs >= 5700.0) & (freqs <= 5715.0)] = -55.0   # bump 1
+    power[(freqs >= 5800.0) & (freqs <= 5815.0)] = -45.0   # bump 2
+    spec = Spectrum(band="5.8G", freqs_mhz=freqs, power_dbm=power)
+    cands = find_candidates(spec, snr_threshold_db=20.0, min_bandwidth_mhz=5.0)
+    assert len(cands) == 2
+    centers = sorted(c.center_mhz for c in cands)
+    assert abs(centers[0] - 5707.5) < 1.0
+    assert abs(centers[1] - 5807.5) < 1.0
