@@ -199,3 +199,37 @@ test('DELETE /api/devices/:id removes the device and persists; 404 if missing', 
   assert.equal(missing.status, 404);
   server.close();
 });
+
+test('POST /api/devices with kind=scanner returns no push, includes telemetry hint', async () => {
+  const reg = { read_user: 'viewer', read_pass: 'rpw', devices: [] };
+  const { server, base } = await startWith(reg);
+  const cookie = await login(base);
+  const res = await fetch(`${base}/api/devices`, {
+    method: 'POST', headers: { cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'scan-01', name: 'Scanner', kind: 'scanner' }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 201);
+  assert.equal(body.device.kind, 'scanner');
+  assert.equal(body.push, undefined);
+  assert.equal(body.scanner.telemetryPath, '/api/telemetry/scan-01');
+  server.close();
+});
+
+test('scanner online is derived from telemetry freshness', async () => {
+  const reg = { read_user: 'viewer', read_pass: 'rpw',
+    devices: [{ id: 'scan-01', name: 'S', location: '', kind: 'scanner', publish_pass: 'p' }] };
+  const { server, base } = await startWith(reg);
+  const cookie = await login(base);
+  let body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
+  assert.equal(body.find((d) => d.id === 'scan-01').online, false);
+  await fetch(`${base}/api/telemetry/scan-01`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ detections: [], occupancy: {}, spectrum: {} }),
+  });
+  body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
+  const scan = body.find((d) => d.id === 'scan-01');
+  assert.equal(scan.online, true);
+  assert.equal(scan.bitrateKbps, null);
+  server.close();
+});

@@ -23,6 +23,7 @@ export function createApp({ registry, getPaths, config }) {
   // In-memory state: last telemetry payload + last byte sample per device (for bitrate).
   const telemetry = new Map();
   const samples = new Map();
+  const SCANNER_FRESH_MS = 15000; // a scanner is "online" if it posted telemetry within this window
 
   const requireAuth = (req, res, next) => {
     if (req.session?.authed) return next();
@@ -66,7 +67,12 @@ export function createApp({ registry, getPaths, config }) {
       const prev = samples.get(d.id);
       d.bitrateKbps = d.online ? computeBitrateKbps(prev?.bytes, prev?.ts, d.bytesReceived, now) : null;
       if (d.online) samples.set(d.id, { bytes: d.bytesReceived, ts: now });
-      d.telemetry = telemetry.get(d.id) || null;
+      const tel = telemetry.get(d.id) || null;
+      d.telemetry = tel;
+      if (d.kind === 'scanner') {
+        d.online = !!tel && (now - tel._ts) < SCANNER_FRESH_MS;
+        d.bitrateKbps = null;
+      }
     }
     return merged;
   }
@@ -92,11 +98,14 @@ export function createApp({ registry, getPaths, config }) {
   });
 
   app.post('/api/devices', requireAuth, (req, res) => {
-    const { id, name, location } = req.body || {};
+    const { id, name, location, kind } = req.body || {};
     try {
       const finalId = (id && String(id).trim()) ? String(id).trim() : nextDeviceId(registry);
-      const device = addDevice(registry, { id: finalId, name, location });
+      const device = addDevice(registry, { id: finalId, name, location, kind });
       config.persistRegistry(registry);
+      if (device.kind === 'scanner') {
+        return res.status(201).json({ device, scanner: { telemetryPath: `/api/telemetry/${device.id}` } });
+      }
       res.status(201).json({ device, push: pushFor(device) });
     } catch (e) {
       const code = /already exists/.test(e.message) ? 409 : 400;
