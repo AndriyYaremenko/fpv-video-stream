@@ -51,3 +51,114 @@ export function detectionX(centerMhz, band, width) {
   const frac = (centerMhz - lo) / ((hi - lo) || 1);
   return Math.max(0, Math.min(width, frac * width));
 }
+
+// ---- DOM rendering (browser only; not unit-tested, validated with `node --check` + manual) ----
+
+export function renderSpectrum(container, scanners) {
+  container.innerHTML = '';
+  for (const s of scanners) container.appendChild(scannerBlock(s));
+}
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  return e;
+}
+
+function scannerBlock(s) {
+  const tel = s.telemetry || {};
+  const block = el('div', 'scan-block');
+  block.dataset.scannerId = s.id;
+
+  const head = el('div', 'scan-head', `
+    <strong>${escapeHtml(s.name)}</strong> <small>${escapeHtml(s.location || '')}</small>
+    <span class="badge ${s.online ? 'on' : 'off'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
+    <span class="scan-actions">
+      <button class="tile-btn" data-act="info" title="Інфо телеметрії">🔑</button>
+      <button class="tile-btn" data-act="edit" title="Редагувати">✏️</button>
+      <button class="tile-btn" data-act="del" title="Видалити">🗑</button>
+    </span>`);
+  block.appendChild(head);
+
+  if (!s.online || !tel.detections) {
+    block.appendChild(el('p', 'scan-empty', 'немає даних'));
+    return block;
+  }
+
+  const occ = el('div', 'scan-occ');
+  for (const band of Object.keys(BAND_RANGES)) {
+    const frac = (tel.occupancy && tel.occupancy[band]) || 0;
+    occ.appendChild(el('div', 'occ-bar', `
+      <span class="occ-label">${band}</span>
+      <span class="occ-track"><span class="occ-fill" style="width:${Math.round(frac * 100)}%"></span></span>
+      <span class="occ-val">${fmtPct(frac)}</span>`));
+  }
+  block.appendChild(occ);
+
+  const charts = el('div', 'scan-charts');
+  for (const band of Object.keys(BAND_RANGES)) {
+    const psd = (tel.spectrum && tel.spectrum[band]) || [];
+    const dets = (tel.detections || []).filter((d) => d.band === band);
+    charts.appendChild(bandChart(band, psd, dets));
+  }
+  block.appendChild(charts);
+
+  block.appendChild(detectionTable(tel.detections || []));
+  return block;
+}
+
+function bandChart(band, psd, dets) {
+  const wrap = el('div', 'band-chart');
+  wrap.appendChild(el('div', 'band-label', band));
+  const w = 240;
+  const h = 60;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.className = 'chart-canvas';
+  const ctx = canvas.getContext('2d');
+  const pts = psdToPoints(psd, w, h);
+  if (pts.length) {
+    ctx.strokeStyle = '#6ca0ff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.stroke();
+  }
+  for (const d of dets) {
+    const x = detectionX(d.center_mhz, band, w);
+    ctx.strokeStyle = classColor(d.class);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  wrap.appendChild(canvas);
+  return wrap;
+}
+
+function detectionTable(dets) {
+  if (!dets.length) return el('p', 'scan-empty', 'немає активних передавачів');
+  const sorted = [...dets].sort((a, b) => (b.power_dbm ?? -999) - (a.power_dbm ?? -999));
+  const table = el('table', 'scan-table',
+    '<thead><tr><th>Бенд</th><th>Частота</th><th>Клас</th><th>RSSI</th><th>Смуга</th><th>Впевн.</th></tr></thead>');
+  const tb = el('tbody');
+  for (const d of sorted) {
+    const freq = `${fmtFreq(d.center_mhz)}${d.channel ? ` (${escapeHtml(d.channel)})` : ''}`;
+    tb.appendChild(el('tr', null, `
+      <td>${escapeHtml(d.band)}</td>
+      <td>${freq}</td>
+      <td><span class="cls" style="color:${classColor(d.class)}">${escapeHtml(d.class)}</span></td>
+      <td>${d.power_dbm ?? '—'} dBm</td>
+      <td>${d.bandwidth_mhz ?? '—'} МГц</td>
+      <td>${fmtPct(d.confidence)}</td>`));
+  }
+  table.appendChild(tb);
+  return table;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
