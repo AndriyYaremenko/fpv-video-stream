@@ -171,7 +171,7 @@ function restartTile(id) {
   const video = document.getElementById(`vid-${id}`);
   if (video) video.srcObject = null;
   const d = lastById.get(id);
-  if (d && d.online) startPlayer(d); // re-establish now; otherwise the next tick will
+  if (d && d.online && d.kind !== 'scanner') startPlayer(d); // re-establish now; otherwise the next tick will
 }
 
 function restartAll() {
