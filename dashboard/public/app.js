@@ -8,6 +8,18 @@ const lastById = new Map(); // id -> latest device snapshot (for restart + edit 
 const grid = document.getElementById('grid');
 const spectrumPanel = document.getElementById('spectrum-panel');
 
+spectrumPanel.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const block = btn.closest('[data-scanner-id]');
+  if (!block) return;
+  const id = block.dataset.scannerId;
+  const act = btn.dataset.act;
+  if (act === 'edit') openEditForm(id);
+  else if (act === 'del') deleteScanner(id);
+  else if (act === 'info') scannerInfoModal(lastById.get(id) || { id, name: id, location: '' }, false);
+});
+
 // ---- tile size (persisted) ----
 const sizeInput = document.getElementById('tile-size');
 const savedSize = localStorage.getItem('tileMin') || '320';
@@ -202,6 +214,12 @@ function openAddForm() {
       <label>Device ID <small>(лишіть порожнім для автогенерації, напр. pi-07)</small>
         <input name="id" placeholder="напр. cam-entrance або порожньо" autocomplete="off" />
       </label>
+      <label>Тип
+        <select name="kind">
+          <option value="camera">Камера</option>
+          <option value="scanner">Сканер (HackRF)</option>
+        </select>
+      </label>
       <label>Назва
         <input name="name" placeholder="напр. Вхідні ворота" required />
       </label>
@@ -224,6 +242,7 @@ async function submitAdd(e) {
     id: (fd.get('id') || '').trim(),
     name: (fd.get('name') || '').trim(),
     location: (fd.get('location') || '').trim(),
+    kind: fd.get('kind') || 'camera',
   };
   const errEl = document.getElementById('add-err');
   errEl.textContent = '';
@@ -232,7 +251,8 @@ async function submitAdd(e) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { errEl.textContent = body.error || `Помилка ${res.status}`; return; }
-  showCreds(body.device, body.push, true);
+  if (body.scanner) scannerInfoModal(body.device, true);
+  else showCreds(body.device, body.push, true);
 }
 
 function openEditForm(id) {
@@ -302,6 +322,16 @@ function showCreds(device, push, isNew) {
     <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
 }
 
+function scannerInfoModal(device, isNew) {
+  showModal(`
+    <h2>${isNew ? '✅ Сканер створено' : '📡 Сканер'}: ${escapeHtml(device.id)}</h2>
+    <p class="muted">${escapeHtml(device.name || '')}${device.location ? ` · ${escapeHtml(device.location)}` : ''}</p>
+    <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує.</p>
+    ${credRow('SCAN_ID на Pi', device.id)}
+    ${credRow('Ендпойнт телеметрії', `/api/telemetry/${device.id}`)}
+    <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
+}
+
 async function deleteDevice(id, name) {
   if (!confirm(`Видалити вузол «${name || id}»? Його потік зупиниться, креди стануть недійсними.`)) return;
   const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -311,6 +341,15 @@ async function deleteDevice(id, name) {
   players.delete(id);
   const el = document.getElementById(`tile-${id}`);
   if (el) el.remove();
+}
+
+async function deleteScanner(id) {
+  const d = lastById.get(id) || { name: id };
+  if (!confirm(`Видалити сканер «${d.name || id}»?`)) return;
+  const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) { alert('Помилка видалення'); return; }
+  lastById.delete(id);
+  // panel re-renders without this scanner on the next SSE tick
 }
 
 // ---- live updates ----
