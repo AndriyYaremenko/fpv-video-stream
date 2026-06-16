@@ -12,6 +12,7 @@ const config = {
   telemetryToken: '',
   pushOpts: { wgIp: '10.8.0.1', rtspPort: 8554, srtPort: 8890, videoDevice: '/dev/video0', framerate: 30, videoSize: '720x576', bitrate: '2M' },
   persistRegistry: () => {},
+  saveRegistry: () => {},
 };
 const fakePaths = async () => ({ items: [{ name: 'pi-01', ready: true, readyTime: '2026-06-13T12:00:00Z', bytesReceived: 10, readers: [] }] });
 
@@ -159,6 +160,28 @@ test('GET /api/devices/:id/push returns push commands for an existing device', a
   assert.equal(res.status, 200);
   assert.match(body.push.rtsp, /rtsp:\/\/pi-01:secretpass@10\.8\.0\.1:8554\/pi-01/);
   const missing = await fetch(`${base}/api/devices/nope/push`, { headers: { cookie } });
+  assert.equal(missing.status, 404);
+  server.close();
+});
+
+test('PATCH /api/devices/:id edits name/location and persists; 404 if missing', async () => {
+  const reg = { devices: [{ id: 'pi-01', name: 'A', location: 'x', publish_pass: 'p1' }] };
+  let saved = 0;
+  const { server, base } = await startWith(reg, { ...config, saveRegistry: () => { saved += 1; } });
+  const cookie = await login(base);
+  const res = await fetch(`${base}/api/devices/pi-01`, {
+    method: 'PATCH', headers: { cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Renamed', location: 'North' }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.device.name, 'Renamed');
+  assert.equal(reg.devices[0].location, 'North');
+  assert.equal(reg.devices[0].publish_pass, 'p1'); // unchanged
+  assert.equal(saved, 1);
+  const missing = await fetch(`${base}/api/devices/nope`, {
+    method: 'PATCH', headers: { cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'z' }),
+  });
   assert.equal(missing.status, 404);
   server.close();
 });

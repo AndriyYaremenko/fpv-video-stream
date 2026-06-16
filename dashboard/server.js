@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mergeStatus, computeBitrateKbps } from '../lib/status.js';
-import { addDevice, removeDevice, nextDeviceId, saveRegistry, loadRegistry, ensureReadUser } from '../lib/registry.js';
+import { addDevice, removeDevice, updateDevice, nextDeviceId, saveRegistry, loadRegistry, ensureReadUser } from '../lib/registry.js';
 import { renderConfig } from '../lib/render-config.js';
 import { buildRtspPush, buildSrtPush } from '../lib/push-command.js';
 import { fetchPaths } from '../lib/mtx-api.js';
@@ -110,6 +110,19 @@ export function createApp({ registry, getPaths, config }) {
     res.json({ device, push: pushFor(device) });
   });
 
+  // Edit name/location (id + publish_pass are immutable). No MediaMTX reload needed —
+  // those fields aren't in mediamtx.yml — so we only persist devices.yml.
+  app.patch('/api/devices/:id', requireAuth, (req, res) => {
+    const { name, location } = req.body || {};
+    try {
+      const device = updateDevice(registry, req.params.id, { name, location });
+      config.saveRegistry(registry);
+      res.json({ device });
+    } catch (e) {
+      res.status(404).json({ error: e.message });
+    }
+  });
+
   app.delete('/api/devices/:id', requireAuth, (req, res) => {
     try {
       removeDevice(registry, req.params.id);
@@ -186,6 +199,8 @@ export async function start() {
       saveRegistry(devicesFile, reg);
       writeFileSync(mediamtxConfig, renderConfig(reg, renderOpts), 'utf8');
     },
+    // Persist registry only (for edits that don't affect MediaMTX auth/paths).
+    saveRegistry: (reg) => saveRegistry(devicesFile, reg),
   };
   const app = createApp({ registry, getPaths: () => fetchPaths(apiBase), config });
   const host = env.DASH_HOST || '10.8.0.1';

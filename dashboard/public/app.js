@@ -3,6 +3,7 @@ import { startWhep } from '/whep.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
+const lastById = new Map(); // id -> latest device snapshot (for restart + edit prefill)
 const grid = document.getElementById('grid');
 
 // ---- tile size (persisted) ----
@@ -21,6 +22,7 @@ document.getElementById('logout').addEventListener('click', async () => {
   location.href = '/login.html';
 });
 document.getElementById('add-device').addEventListener('click', openAddForm);
+document.getElementById('restart-all').addEventListener('click', restartAll);
 
 // ---- reusable form/creds modal ----
 const formModal = document.getElementById('form-modal');
@@ -69,7 +71,9 @@ function tileEl(d) {
       <div class="tile-top">
         <span class="badge" id="badge-${d.id}"></span>
         <div class="tile-actions">
+          <button class="tile-btn act-restart" title="Перезапустити перегляд">🔄</button>
           <button class="tile-btn act-creds" title="Креди / команда пушу">🔑</button>
+          <button class="tile-btn act-edit" title="Редагувати">✏️</button>
           <button class="tile-btn act-del" title="Видалити вузол">🗑</button>
         </div>
       </div>
@@ -83,7 +87,9 @@ function tileEl(d) {
       </div>
     </div>`;
   el.addEventListener('click', () => openModal(d));
+  el.querySelector('.act-restart').addEventListener('click', (e) => { e.stopPropagation(); restartTile(d.id); });
   el.querySelector('.act-creds').addEventListener('click', (e) => { e.stopPropagation(); viewCreds(d.id); });
+  el.querySelector('.act-edit').addEventListener('click', (e) => { e.stopPropagation(); openEditForm(d.id); });
   el.querySelector('.act-del').addEventListener('click', (e) => { e.stopPropagation(); deleteDevice(d.id, d.name); });
   grid.appendChild(el);
   return el;
@@ -95,6 +101,9 @@ function render(devices) {
 
   for (const d of devices) {
     const el = tileEl(d);
+    lastById.set(d.id, d);
+    el.querySelector('.tile-meta strong').textContent = d.name;     // reflect edits
+    el.querySelector('.tile-meta small').textContent = d.location;
     el.classList.toggle('offline', !d.online);
     const badge = el.querySelector(`#badge-${d.id}`);
     badge.textContent = d.online ? 'ONLINE' : 'OFFLINE';
@@ -121,6 +130,7 @@ function render(devices) {
       const st = players.get(id);
       if (st && st.player) st.player.close();
       players.delete(id);
+      lastById.delete(id);
       el.remove();
     }
   }
@@ -135,6 +145,21 @@ async function startPlayer(d) {
   } catch {
     players.set(d.id, { player: null }); // clear `starting` so a later tick retries
   }
+}
+
+// Restart the live WebRTC playback for a tile (tear down + re-establish). Does not touch ingest.
+function restartTile(id) {
+  const st = players.get(id);
+  if (st && st.player) st.player.close();
+  players.delete(id);
+  const video = document.getElementById(`vid-${id}`);
+  if (video) video.srcObject = null;
+  const d = lastById.get(id);
+  if (d && d.online) startPlayer(d); // re-establish now; otherwise the next tick will
+}
+
+function restartAll() {
+  for (const id of [...lastById.keys()]) restartTile(id);
 }
 
 // ---- fullscreen viewer ----
@@ -192,6 +217,48 @@ async function submitAdd(e) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { errEl.textContent = body.error || `Помилка ${res.status}`; return; }
   showCreds(body.device, body.push, true);
+}
+
+function openEditForm(id) {
+  const d = lastById.get(id) || { id, name: '', location: '' };
+  showModal(`
+    <h2>Редагувати вузол: ${escapeHtml(id)}</h2>
+    <form id="edit-form" class="form">
+      <label>Назва
+        <input name="name" value="${escapeHtml(d.name || '')}" required />
+      </label>
+      <label>Локація
+        <input name="location" value="${escapeHtml(d.location || '')}" />
+      </label>
+      <p class="muted small">ID та пароль не змінюються. Щоб змінити ID — видали вузол і створи новий.</p>
+      <p class="form-err" id="edit-err"></p>
+      <div class="form-actions">
+        <button type="button" data-close class="btn-ghost">Скасувати</button>
+        <button type="submit" class="btn-primary">Зберегти</button>
+      </div>
+    </form>`);
+  document.getElementById('edit-form').addEventListener('submit', (e) => submitEdit(e, id));
+}
+
+async function submitEdit(e, id) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const payload = { name: (fd.get('name') || '').trim(), location: (fd.get('location') || '').trim() };
+  const errEl = document.getElementById('edit-err');
+  errEl.textContent = '';
+  const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (!res.ok) { const b = await res.json().catch(() => ({})); errEl.textContent = b.error || `Помилка ${res.status}`; return; }
+  const body = await res.json();
+  const el = document.getElementById(`tile-${id}`);
+  if (el) {
+    el.querySelector('.tile-meta strong').textContent = body.device.name;
+    el.querySelector('.tile-meta small').textContent = body.device.location;
+  }
+  const cur = lastById.get(id);
+  if (cur) { cur.name = body.device.name; cur.location = body.device.location; }
+  hideModal();
 }
 
 async function viewCreds(id) {

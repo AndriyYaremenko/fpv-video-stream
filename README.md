@@ -53,11 +53,12 @@ new namespace.
 
 **Manage nodes from the dashboard:** the web UI has **➕ Додати вузол** to create a node
 (device id optional — auto-generated as `pi-NN` if blank); it shows the publish password and the
-ready-to-paste RTSP/SRT push command. Each tile has 🔑 (re-show creds/push command) and 🗑
-(delete). MediaMTX hot-reloads its config on every change — no restart needed. WireGuard on the Pi
-is still set up manually (e.g. via the wg-easy UI). The **▭ slider** in the top bar resizes the
-video tiles (persisted per browser). The `./compose-add-device.sh` CLI remains available as an
-alternative to the web UI.
+ready-to-paste RTSP/SRT push command. Each tile has 🔄 (restart the live view), 🔑 (re-show
+creds/push command), ✏️ (edit name/location) and 🗑 (delete). MediaMTX hot-reloads its config on
+add/delete — no restart needed; edits to name/location only touch `devices.yml`. WireGuard on the
+Pi is still set up manually (e.g. via the wg-easy UI). The top bar also has **🔄 Усі** (restart all
+views) and a **▭ slider** to resize the video tiles (persisted per browser). The
+`./compose-add-device.sh` CLI remains available as an alternative to the web UI.
 
 ## Add a new node
 

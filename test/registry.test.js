@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { genSecret, addDevice, ensureReadUser, ensurePublishSecrets, validateId, nextDeviceId, removeDevice } from '../lib/registry.js';
+import { genSecret, addDevice, ensureReadUser, ensurePublishSecrets, validateId, nextDeviceId, removeDevice, updateDevice } from '../lib/registry.js';
 
 test('genSecret returns a long url-safe token', () => {
   const s = genSecret();
@@ -69,4 +69,16 @@ test('removeDevice removes and returns the device, throws if missing', () => {
   assert.equal(removed.id, 'pi-01');
   assert.deepEqual(reg.devices.map((d) => d.id), ['pi-02']);
   assert.throws(() => removeDevice(reg, 'nope'), /not found/);
+});
+
+test('updateDevice changes name/location (partial), throws if missing', () => {
+  const reg = { devices: [{ id: 'pi-01', name: 'A', location: 'x', publish_pass: 'p' }] };
+  const d = updateDevice(reg, 'pi-01', { name: 'New', location: 'Y' });
+  assert.equal(d.name, 'New');
+  assert.equal(d.location, 'Y');
+  updateDevice(reg, 'pi-01', { name: 'Only' });          // partial
+  assert.equal(reg.devices[0].name, 'Only');
+  assert.equal(reg.devices[0].location, 'Y');            // location untouched
+  assert.equal(reg.devices[0].publish_pass, 'p');        // pass never changes
+  assert.throws(() => updateDevice(reg, 'nope', { name: 'z' }), /not found/);
 });
