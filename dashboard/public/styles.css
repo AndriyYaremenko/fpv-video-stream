@@ -89,3 +89,8 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .scan-table th, .scan-table td { text-align:left; padding:.25rem .5rem; border-bottom:1px solid var(--line); }
 .scan-table th { color:#9aa4b2; font-weight:600; }
 .scan-table .cls { font-weight:700; }
+
+/* sound-alert toggle + new-detection highlight */
+#sound-toggle.armed { color: var(--on); border-color: var(--on); }
+.scan-table tr.is-new { background: rgba(244,183,64,.18); }
+.scan-table tr.is-new td { font-weight: 600; }

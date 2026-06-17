@@ -1,12 +1,15 @@
 // dashboard/public/app.js — grid render, WHEP players, device management (add/delete/creds), tile sizing.
 import { startWhep } from '/whep.js';
 import { splitByKind, renderSpectrum } from '/spectrum.js';
+import { diffNewKeys, SoundAlerter } from '/alert.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
 const lastById = new Map(); // id -> latest device snapshot (for restart + edit prefill)
 const grid = document.getElementById('grid');
 const spectrumPanel = document.getElementById('spectrum-panel');
+const alerter = new SoundAlerter();
+let prevScanKeys = null;
 
 spectrumPanel.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
@@ -19,6 +22,29 @@ spectrumPanel.addEventListener('click', (e) => {
   else if (act === 'del') deleteScanner(id);
   else if (act === 'info') scannerInfoModal(lastById.get(id) || { id, name: id, location: '' }, false);
 });
+
+// ---- sound-alert toggle ----
+const soundBtn = document.getElementById('sound-toggle');
+function setSoundUI() {
+  soundBtn.textContent = alerter.armed ? '🔔' : '🔕';
+  soundBtn.classList.toggle('armed', alerter.armed);
+  soundBtn.title = alerter.armed ? 'Звук сповіщень: увімкнено' : 'Звук сповіщень: вимкнено';
+}
+function setArmed(on) {
+  if (on) alerter.arm(); else alerter.disarm();
+  localStorage.setItem('soundArmed', on ? '1' : '0');
+  setSoundUI();
+}
+soundBtn.addEventListener('click', () => setArmed(!alerter.armed));
+// Restore preference; autoplay needs a user gesture, so if previously armed, arm on first interaction.
+if (localStorage.getItem('soundArmed') === '1') {
+  const resume = () => { alerter.arm(); setSoundUI(); document.removeEventListener('pointerdown', resume); };
+  document.addEventListener('pointerdown', resume, { once: true });
+  soundBtn.textContent = '🔔';
+  soundBtn.classList.add('armed');
+} else {
+  setSoundUI();
+}
 
 // ---- tile size (persisted) ----
 const sizeInput = document.getElementById('tile-size');
@@ -116,7 +142,11 @@ function render(devices) {
   document.getElementById('summary').textContent =
     `${cameras.filter((d) => d.online).length}/${cameras.length} онлайн`;
 
-  renderSpectrumPanel(scanners);
+  const allDets = scanners.flatMap((s) => (s.telemetry && s.telemetry.detections) || []);
+  const { keys, newKeys } = diffNewKeys(prevScanKeys, allDets);
+  if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
+  prevScanKeys = keys;
+  renderSpectrumPanel(scanners, new Set(newKeys));
 
   for (const d of cameras) {
     const el = tileEl(d);
@@ -154,14 +184,14 @@ function render(devices) {
   }
 }
 
-function renderSpectrumPanel(scanners) {
+function renderSpectrumPanel(scanners, highlightKeys = new Set()) {
   if (!scanners.length) {
     spectrumPanel.classList.add('hidden');
     spectrumPanel.innerHTML = '';
     return;
   }
   spectrumPanel.classList.remove('hidden');
-  renderSpectrum(spectrumPanel, scanners);
+  renderSpectrum(spectrumPanel, scanners, highlightKeys);
 }
 
 async function startPlayer(d) {
