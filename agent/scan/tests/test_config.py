@@ -34,13 +34,16 @@ def test_mqtt_config():
     c2 = load_config({
         "SCAN_MQTT_HOST": "10.8.0.9", "SCAN_MQTT_PORT": "1884",
         "MQTT_PUB_USER": "pi", "MQTT_PUB_PASS": "s3cret",
-        "SCAN_MQTT_ENABLED": "0",
+        "SCAN_MQTT_KEEPALIVE": "30", "SCAN_MQTT_ENABLED": "0",
     })
     assert c2.mqtt_host == "10.8.0.9"
     assert c2.mqtt_port == 1884
     assert c2.mqtt_user == "pi"
     assert c2.mqtt_pass == "s3cret"
+    assert c2.mqtt_keepalive == 30
     assert c2.mqtt_enabled is False
+    # a truthy SCAN_MQTT_ENABLED keeps it on (guards the falsey-set boundary)
+    assert load_config({"SCAN_MQTT_ENABLED": "1"}).mqtt_enabled is True
 
 
 def test_http_endpoint_config():
