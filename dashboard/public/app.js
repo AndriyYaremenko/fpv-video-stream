@@ -145,7 +145,7 @@ function render(devices) {
   const allDets = scanners.flatMap((s) => (s.telemetry && s.telemetry.detections) || []);
   const { keys, newKeys } = diffNewKeys(prevScanKeys, allDets);
   if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
-  prevScanKeys = keys;
+  prevScanKeys = scanners.length ? keys : null;   // no scanners -> reset baseline so reconnect is silent
   renderSpectrumPanel(scanners, new Set(newKeys));
 
   for (const d of cameras) {
