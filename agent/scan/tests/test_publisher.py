@@ -31,3 +31,101 @@ def test_build_detection_payload_shape():
     assert p["ts"] == 100
     assert p["detections"][0]["class"] == "analog"     # to_dict() emits "class"
     assert p["occupancy"] == {"5.8G": 0.5}
+
+
+class FakeClient:
+    def __init__(self):
+        self.published = []          # list of (topic, payload, qos, retain)
+        self.will = None             # (topic, payload, qos, retain)
+        self.creds = None            # (user, pass)
+        self.connected_to = None     # (host, port, keepalive)
+        self.on_connect = None
+        self.loop_started = False
+
+    def username_pw_set(self, user, password):
+        self.creds = (user, password)
+
+    def will_set(self, topic, payload, qos=0, retain=False):
+        self.will = (topic, payload, qos, retain)
+
+    def connect(self, host, port, keepalive=60):
+        self.connected_to = (host, port, keepalive)
+
+    def loop_start(self):
+        self.loop_started = True
+
+    def loop_stop(self):
+        self.loop_started = False
+
+    def disconnect(self):
+        pass
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.published.append((topic, payload, qos, retain))
+
+
+def _pub(fake):
+    return publisher.MqttPublisher(
+        "10.8.0.1", 1883, "pub", "pw", "hackrf", client_factory=lambda cid: fake
+    )
+
+
+def test_connect_sets_lwt_and_creds_and_starts_loop():
+    fake = FakeClient()
+    p = _pub(fake)
+    p.connect(ts=100)
+    topic, payload, qos, retain = fake.will
+    assert topic == "fpv/hackrf/status"
+    assert json.loads(payload) == {"online": False, "ts": 100}
+    assert qos == 1 and retain is True
+    assert fake.creds == ("pub", "pw")
+    assert fake.connected_to == ("10.8.0.1", 1883, 60)
+    assert fake.loop_started is True
+
+
+def test_on_connect_publishes_online_status():
+    fake = FakeClient()
+    p = _pub(fake)
+    p.connect(ts=100)
+    p._on_connect(fake, None, None, 0)          # simulate the broker connack
+    status = [m for m in fake.published if m[0] == "fpv/hackrf/status"]
+    assert status, "expected an online status publish"
+    topic, payload, qos, retain = status[-1]
+    assert json.loads(payload)["online"] is True
+    assert qos == 1 and retain is True
+
+
+def test_publish_spectrum_topic_qos_retain():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_spectrum(200, "2.4G", 2370.0, 2510.0, [-80.0])
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/spectrum"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 0 and retain is True
+    body = json.loads(payload)
+    assert body["ts"] == 200 and body["bands"][0]["id"] == "2.4G"
+
+
+def test_publish_detection_topic_qos_retain():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_detection(300, [_det()], {"5.8G": 0.4})
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/detection"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    assert json.loads(payload)["detections"][0]["class"] == "analog"
+
+
+def test_publish_is_noop_when_not_connected():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")     # never connect()
+    p.publish_spectrum(1, "5.8G", 5645.0, 5945.0, [-90.0])      # must not raise
+    p.publish_detection(1, [], {})
+
+
+def test_publish_swallows_client_errors():
+    class BoomClient(FakeClient):
+        def publish(self, *a, **k):
+            raise RuntimeError("broker down")
+    fake = BoomClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_spectrum(1, "5.8G", 5645.0, 5945.0, [-90.0])      # guarded -> no raise
