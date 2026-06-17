@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Server side for multi-node FPV video surveillance (MediaMTX + dashboard)",
   "scripts": {
-    "test": "node --test",
+    "test": "node --import ./test/loader.js --test",
     "gen-config": "node bin/gen-mediamtx.js",
     "add-device": "node bin/add-device.js",
     "start": "node dashboard/server.js"

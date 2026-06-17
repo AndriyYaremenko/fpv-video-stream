@@ -1,3 +1,4 @@
+import { detectionKey } from '/alert.js';
 // dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + DOM render (browser only).
 
 export const BAND_RANGES = {
@@ -54,9 +55,9 @@ export function detectionX(centerMhz, band, width) {
 
 // ---- DOM rendering (browser only; not unit-tested, validated with `node --check` + manual) ----
 
-export function renderSpectrum(container, scanners) {
+export function renderSpectrum(container, scanners, highlightKeys = new Set()) {
   container.innerHTML = '';
-  for (const s of scanners) container.appendChild(scannerBlock(s));
+  for (const s of scanners) container.appendChild(scannerBlock(s, highlightKeys));
 }
 
 function el(tag, cls, html) {
@@ -66,7 +67,7 @@ function el(tag, cls, html) {
   return e;
 }
 
-function scannerBlock(s) {
+function scannerBlock(s, highlightKeys) {
   const tel = s.telemetry || {};
   const block = el('div', 'scan-block');
   block.dataset.scannerId = s.id;
@@ -104,7 +105,7 @@ function scannerBlock(s) {
   }
   block.appendChild(charts);
 
-  block.appendChild(detectionTable(tel.detections || []));
+  block.appendChild(detectionTable(tel.detections || [], highlightKeys));
   return block;
 }
 
@@ -139,21 +140,25 @@ function bandChart(band, psd, dets) {
   return wrap;
 }
 
-function detectionTable(dets) {
+function detectionTable(dets, highlightKeys = new Set()) {
   if (!dets.length) return el('p', 'scan-empty', 'немає активних передавачів');
   const sorted = [...dets].sort((a, b) => (b.power_dbm ?? -999) - (a.power_dbm ?? -999));
   const table = el('table', 'scan-table',
-    '<thead><tr><th>Бенд</th><th>Частота</th><th>Клас</th><th>RSSI</th><th>Смуга</th><th>Впевн.</th></tr></thead>');
+    '<thead><tr><th></th><th>Бенд</th><th>Частота</th><th>Клас</th><th>RSSI</th><th>Смуга</th><th>Впевн.</th></tr></thead>');
   const tb = el('tbody');
   for (const d of sorted) {
+    const isNew = highlightKeys.has(detectionKey(d));
+    const tr = el('tr', isNew ? 'is-new' : null);
     const freq = `${fmtFreq(d.center_mhz)}${d.channel ? ` (${escapeHtml(d.channel)})` : ''}`;
-    tb.appendChild(el('tr', null, `
+    tr.innerHTML = `
+      <td>${isNew ? '⚠' : ''}</td>
       <td>${escapeHtml(d.band)}</td>
       <td>${freq}</td>
       <td><span class="cls" style="color:${classColor(d.class)}">${escapeHtml(d.class)}</span></td>
       <td>${d.power_dbm == null ? '—' : escapeHtml(String(d.power_dbm))} dBm</td>
       <td>${d.bandwidth_mhz == null ? '—' : escapeHtml(String(d.bandwidth_mhz))} МГц</td>
-      <td>${fmtPct(d.confidence)}</td>`));
+      <td>${fmtPct(d.confidence)}</td>`;
+    tb.appendChild(tr);
   }
   table.appendChild(tb);
   return table;
