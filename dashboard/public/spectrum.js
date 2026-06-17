@@ -1,4 +1,4 @@
-import { detectionKey } from '/alert.js';
+import { detectionKey } from './alert.js';
 // dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + DOM render (browser only).
 
 export const BAND_RANGES = {
