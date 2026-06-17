@@ -186,6 +186,11 @@ Scanner devices are excluded from `mediamtx.yml` (they never publish video). To 
 locally without a HackRF, run the scan service in replay mode (see above) pointing `SCAN_SERVER_URL`
 at the dashboard.
 
+The dashboard's top bar has a **🔔 sound toggle**: when enabled, a newly detected transmitter
+(any class) plays a short beep and its row in the Spectrum panel is highlighted with ⚠. The beep
+needs the toggle clicked once per session (browser autoplay policy); the visual highlight works
+regardless.
+
 ## Public TLS access (later, optional)
 
 Not enabled in this iteration. To expose the dashboard publicly, put Caddy (automatic TLS) in front
