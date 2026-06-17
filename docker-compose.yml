@@ -59,3 +59,13 @@ services:
     depends_on:
       - mediamtx
     restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    network_mode: "container:wg-easy"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - ./mosquitto/data:/mosquitto/data
+    restart: unless-stopped
