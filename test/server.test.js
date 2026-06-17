@@ -258,11 +258,7 @@ test('GET /api/mqtt requires auth', async () => {
 
 test('authed /api/mqtt returns the WSS url + sub creds', async () => {
   const { server, base } = await startServer();
-  const login = await fetch(`${base}/login`, {
-    method: 'POST', redirect: 'manual',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'user=op&pass=pw',
-  });
-  const cookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  const cookie = await login(base);
   const res = await fetch(`${base}/api/mqtt`, { headers: { cookie } });
   const body = await res.json();
   assert.equal(res.status, 200);
