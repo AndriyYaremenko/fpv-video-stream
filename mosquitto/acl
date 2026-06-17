@@ -1,0 +1,6 @@
+# mosquitto/acl — pub publishes scan data, sub reads it.
+user pub
+topic write fpv/#
+
+user sub
+topic read fpv/#
