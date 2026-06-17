@@ -28,9 +28,3 @@ def test_write_state_roundtrip(tmp_path):
     assert loaded == payload
 
 
-def test_post_telemetry_swallows_errors(monkeypatch):
-    def boom(*a, **k):
-        raise RuntimeError("network down")
-    monkeypatch.setattr(reporter.requests, "post", boom)
-    ok = reporter.post_telemetry("http://10.8.0.1:8080", "", "scan-01", {"ts": 1})
-    assert ok is False        # never raises; returns False

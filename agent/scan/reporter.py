@@ -3,8 +3,6 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List
 
-import requests
-
 from models import Detection
 
 
@@ -32,18 +30,6 @@ def write_state(path: str, payload: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     os.replace(tmp, path)
-
-
-def post_telemetry(url: str, token: str, scanner_id: str, payload: dict, timeout: float = 3.0) -> bool:
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    endpoint = f"{url.rstrip('/')}/api/telemetry/{scanner_id}"
-    try:
-        requests.post(endpoint, json=payload, headers=headers, timeout=timeout)
-        return True
-    except Exception:
-        return False
 
 
 class Holder:

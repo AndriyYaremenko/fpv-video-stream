@@ -6,3 +6,5 @@ node_modules/
 *.log
 runtime/
 agent/scan/.venv/
+__pycache__/
+*.pyc
