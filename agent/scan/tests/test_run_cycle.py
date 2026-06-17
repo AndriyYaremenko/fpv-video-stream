@@ -71,7 +71,20 @@ def test_run_cycle_end_to_end(tmp_path):
     assert len(pub.spectra) == len(cfg.bands)
     ts, band, low, high, psd = pub.spectra[0]
     assert band == "5.8G" and low == 5645.0 and high == 5945.0
-    assert len(psd) > 0
+    assert len(psd) == 128                 # MQTT frame is 128-pt (state file stays 64) — lock the split
     # exactly one detection publish per cycle, carrying the occupancy map
     assert len(pub.detections) == 1
     assert pub.detections[0][2]["5.8G"] > 0.0
+
+
+def test_run_cycle_without_publisher_still_writes_state(tmp_path):
+    # The broker-down fallback: main() passes publisher=None; the cycle must still
+    # detect, write the state file, and return the payload (no publish, no crash).
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+
+    payload = main.run_cycle(cfg, now_ts=1718530000)     # publisher defaults to None
+
+    assert len(payload["detections"]) == 1
+    saved = json.loads((tmp_path / "scan.json").read_text(encoding="utf-8"))
+    assert saved == payload
