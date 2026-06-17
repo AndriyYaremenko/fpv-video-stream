@@ -1,0 +1,29 @@
+# Sample traefik file-provider config to serve the FPV dashboard over public HTTPS.
+#
+# Deploy: copy to the traefik file-provider dir (e.g. /root/custom/rerfpv.yml) on the host that
+# runs traefik. traefik watches that dir and hot-reloads; its Let's Encrypt resolver issues the
+# cert on first request (http-01 needs the domain's DNS pointed at the host and :80 reachable).
+#
+# Prereqs:
+#   - DNS: rerfpv.ksm.in.ua -> the host's public IP
+#   - dashboard started with DASH_HOST=0.0.0.0 (so it listens on all interfaces in wg-easy's netns)
+#   - the service url below uses the wg-easy container's docker-bridge IP; verify/refresh it with:
+#       docker inspect wg-easy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+#   - replace `letsEncrypt` with your traefik certificatesResolvers key if different
+
+http:
+  routers:
+    rerfpv:
+      entryPoints:
+        - websecure
+      service: service-rerfpv
+      rule: "Host(`rerfpv.ksm.in.ua`)"
+      tls:
+        certResolver: letsEncrypt
+
+  services:
+    service-rerfpv:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.3:8080"   # wg-easy bridge IP : dashboard port
+        passHostHeader: true

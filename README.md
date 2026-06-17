@@ -191,11 +191,28 @@ The dashboard's top bar has a **🔔 sound toggle**: when enabled, a newly detec
 needs the toggle clicked once per session (browser autoplay policy); the visual highlight works
 regardless.
 
-## Public TLS access (later, optional)
+## Public HTTPS (optional, via an existing traefik)
 
-Not enabled in this iteration. To expose the dashboard publicly, put Caddy (automatic TLS) in front
-of `127.0.0.1:8080` with a login, point a domain at the server's public IP, open 80/443, and keep
-the MediaMTX control API internal. The dashboard already runs behind a login.
+If the host already runs a traefik reverse proxy (owning :80/:443 with a Let's Encrypt resolver and
+a file provider), you can serve the dashboard at `https://<domain>` behind its login. Steps:
+
+1. **Make the dashboard reachable by the proxy.** It binds the WG IP by default
+   (`DASH_HOST=10.8.0.1`), which traefik (on the docker bridge) can't reach because the dashboard
+   runs in wg-easy's network namespace. Set `DASH_HOST=0.0.0.0` in `.env` and recreate it:
+   `docker compose up -d --no-deps dashboard`. WG clients keep using `http://10.8.0.1:8080`; port
+   8080 is still **not** published to the host, so the only public path is through traefik.
+2. **Add a traefik file-provider route** (see `deploy/traefik/rerfpv.yml.example`): a router for
+   `Host(<domain>)` on the `websecure` entrypoint with `tls.certResolver: <your-le-resolver>`, and a
+   service pointing at the wg-easy container's **bridge IP** on 8080 (find it with
+   `docker inspect wg-easy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`).
+   Drop the file in traefik's watched config dir; it hot-reloads and the cert auto-issues (http-01
+   needs the domain's DNS pointed at the host and :80 open). **No traefik restart; wg-easy untouched.**
+
+Point the domain's DNS at the host's public IP first. **Caveat:** camera video will **not** play over
+the public HTTPS dashboard — the WHEP player pulls from `http://10.8.0.1:8889` (WG-only WebRTC +
+mixed content), so it's blocked on an HTTPS page. The UI, login, status, the Spectrum panel and the
+sound alert work over HTTPS; for live video use WG (`http://10.8.0.1:8080`). If the wg-easy container
+is recreated and its bridge IP changes, update the service URL in the traefik file.
 
 ## Operations
 
