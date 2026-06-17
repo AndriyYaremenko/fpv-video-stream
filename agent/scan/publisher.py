@@ -27,7 +27,9 @@ def build_detection_payload(scanner_id, ts, detections, occupancy):
 def _default_client_factory(client_id):
     # Lazy import: paho is only needed for a real connection, not for tests/builders.
     import paho.mqtt.client as mqtt
-    return mqtt.Client(client_id=client_id)
+    # paho-mqtt 2.0 requires an explicit CallbackAPIVersion; VERSION1 keeps the
+    # historical on_connect(client, userdata, flags, rc) signature used below.
+    return mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id)
 
 
 class MqttPublisher:
@@ -63,6 +65,9 @@ class MqttPublisher:
 
     def _on_connect(self, client, userdata, flags, rc, *args):
         # (Re)connect -> republish presence so a reconnect restores "online".
+        if rc != 0:                       # refused CONNACK (VERSION1: int rc, 0 = success)
+            LOG.warning("MQTT connect refused (rc=%s)", rc)
+            return
         try:
             client.publish(
                 self._t_status, json.dumps({"online": True, "ts": int(time.time())}),

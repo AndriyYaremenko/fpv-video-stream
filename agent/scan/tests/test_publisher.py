@@ -1,6 +1,6 @@
 import json
-
-import pytest
+import sys
+import types
 
 from models import Detection
 import publisher
@@ -129,3 +129,37 @@ def test_publish_swallows_client_errors():
     fake = BoomClient()
     p = _pub(fake); p.connect(ts=1)
     p.publish_spectrum(1, "5.8G", 5645.0, 5945.0, [-90.0])      # guarded -> no raise
+
+
+def test_on_connect_skips_status_on_refused_connack():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p._on_connect(fake, None, None, 5)          # rc != 0 -> connection refused
+    status = [m for m in fake.published if m[0] == "fpv/hackrf/status"]
+    assert status == []                          # no "online" published on a refused connect
+
+
+def test_default_client_factory_passes_callback_api_version_v1(monkeypatch):
+    # The real paho isn't installed in the dev venv; fake the lazy-imported module so we can
+    # verify the constructor is called the paho-2.x way (CallbackAPIVersion required).
+    calls = {}
+
+    class _CB:                                   # stand-in for mqtt.CallbackAPIVersion
+        VERSION1 = "VERSION1"
+
+    def _Client(*args, **kwargs):
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return object()
+
+    fake_mod = types.ModuleType("paho.mqtt.client")
+    fake_mod.CallbackAPIVersion = _CB
+    fake_mod.Client = _Client
+    monkeypatch.setitem(sys.modules, "paho", types.ModuleType("paho"))
+    monkeypatch.setitem(sys.modules, "paho.mqtt", types.ModuleType("paho.mqtt"))
+    monkeypatch.setitem(sys.modules, "paho.mqtt.client", fake_mod)
+
+    publisher._default_client_factory("scan-hackrf")
+
+    assert calls["args"][0] == _CB.VERSION1       # first positional = CallbackAPIVersion.VERSION1
+    assert calls["kwargs"].get("client_id") == "scan-hackrf"
