@@ -84,6 +84,10 @@ export function createApp({ registry, getPaths, config }) {
     res.json({ webrtcBase: config.webrtcBase, readUser: config.readUser, readPass: config.readPass });
   });
 
+  app.get('/api/mqtt', requireAuth, (req, res) => {
+    res.json({ url: config.mqtt?.url || '', user: config.mqtt?.user || 'sub', pass: config.mqtt?.pass || '' });
+  });
+
   app.get('/api/devices', requireAuth, async (req, res) => {
     try {
       res.json(await snapshot());
@@ -196,6 +200,11 @@ export async function start() {
     readUser: registry.read_user,
     readPass: registry.read_pass,
     telemetryToken: env.TELEMETRY_TOKEN || '',
+    mqtt: {
+      url: env.MQTT_WSS_URL || '',
+      user: env.MQTT_SUB_USER || 'sub',
+      pass: env.MQTT_SUB_PASS || '',
+    },
     pollIntervalMs: Number(env.POLL_INTERVAL_MS || 2000),
     scannerFreshMs: Number(env.SCANNER_FRESH_MS || 60000),
     pushOpts: {

@@ -10,6 +10,7 @@ const config = {
   dashUser: 'op', dashPass: 'pw', sessionSecret: 'test-secret',
   webrtcBase: 'http://10.8.0.1:8889', readUser: 'viewer', readPass: 'rpw',
   telemetryToken: '',
+  mqtt: { url: 'wss://rerfpv.ksm.in.ua/mqtt', user: 'sub', pass: 'subpw' },
   pushOpts: { wgIp: '10.8.0.1', rtspPort: 8554, srtPort: 8890, videoDevice: '/dev/video0', framerate: 30, videoSize: '720x576', bitrate: '2M' },
   persistRegistry: () => {},
   saveRegistry: () => {},
@@ -245,5 +246,28 @@ test('scanner freshness window is configurable (stale telemetry -> offline)', as
   await new Promise((r) => setTimeout(r, 25)); // exceed the 1ms freshness window
   const body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
   assert.equal(body.find((d) => d.id === 'scan-01').online, false); // stale -> offline
+  server.close();
+});
+
+test('GET /api/mqtt requires auth', async () => {
+  const { server, base } = await startServer();
+  const res = await fetch(`${base}/api/mqtt`, { redirect: 'manual' });
+  assert.equal(res.status, 401);
+  server.close();
+});
+
+test('authed /api/mqtt returns the WSS url + sub creds', async () => {
+  const { server, base } = await startServer();
+  const login = await fetch(`${base}/login`, {
+    method: 'POST', redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'user=op&pass=pw',
+  });
+  const cookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  const res = await fetch(`${base}/api/mqtt`, { headers: { cookie } });
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.url, 'wss://rerfpv.ksm.in.ua/mqtt');
+  assert.equal(body.user, 'sub');
+  assert.equal(body.pass, 'subpw');
   server.close();
 });
