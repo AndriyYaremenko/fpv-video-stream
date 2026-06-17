@@ -65,6 +65,7 @@ services:
     network_mode: "container:wg-easy"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # generate via mosquitto/gen-passwd.sh BEFORE first `up` (else docker creates a dir here)
       - ./mosquitto/passwd:/mosquitto/config/passwd:ro
       - ./mosquitto/acl:/mosquitto/config/acl:ro
       - ./mosquitto/data:/mosquitto/data

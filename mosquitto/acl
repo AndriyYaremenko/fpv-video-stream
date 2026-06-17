@@ -1,4 +1,7 @@
 # mosquitto/acl — pub publishes scan data, sub reads it.
+# The usernames below are LITERAL: they must match MQTT_PUB_USER/MQTT_SUB_USER in .env
+# (default pub/sub). Renaming a user in .env without editing here = authenticated but all
+# topics denied. Edit both together.
 user pub
 topic write fpv/#
 
