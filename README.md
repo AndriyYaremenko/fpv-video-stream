@@ -229,3 +229,25 @@ node bin/gen-mediamtx.js && systemctl reload mediamtx   # after manual devices.y
 npm install
 npm test          # node --test over lib/ and dashboard/
 ```
+
+## MQTT broker (scan data)
+
+Scan data (detections + spectrum) flows over MQTT instead of HTTP. A `mosquitto` container runs in
+wg-easy's netns: the Pi publishes over WireGuard (`10.8.0.1:1883`); the browser subscribes over WSS
+(`wss://rerfpv.ksm.in.ua/mqtt`, fronted by traefik). Topics (namespaced per scanner `<id>`):
+
+- `fpv/<id>/detection` — QoS 1, retained — structured events `{detections[], occupancy}`.
+- `fpv/<id>/spectrum` — QoS 0, retained — self-describing spectrum frames `{bands:[{id,low_mhz,high_mhz,psd}]}`.
+- `fpv/<id>/status` — retained + LWT — presence `{online}`.
+
+Deploy on the server:
+```bash
+cd /home/andriy/fpv-video-stream
+# set MQTT_* in .env, then build the password file and start the broker:
+bash mosquitto/gen-passwd.sh
+docker compose up -d --no-deps mosquitto
+# expose the WS as WSS via traefik (one-time): copy the sample, adjust the wg-easy bridge IP if needed
+sudo cp deploy/traefik/rerfpv-mqtt.yml.example /root/custom/rerfpv-mqtt.yml   # traefik hot-reloads
+```
+The dashboard serves the browser's subscribe creds at `GET /api/mqtt` (login-gated). The Pi uses
+`MQTT_PUB_USER`/`MQTT_PUB_PASS` (configured Pi-side in SP-B).
