@@ -12,7 +12,8 @@ from detector import find_candidates
 from dweller import compute_features, dwell_live, dwell_replay
 from classifier import classify
 from channel_map import nearest_channel
-from reporter import build_payload, write_state, post_telemetry, Holder, make_local_server
+from reporter import build_payload, write_state, Holder, make_local_server
+from publisher import MqttPublisher
 from device import reset_hackrf
 from models import Spectrum, Candidate, Detection
 
@@ -51,7 +52,7 @@ def _downsample(spec: Spectrum, points: int = 64) -> list:
     return [round(float(p[i]), 1) for i in idx]
 
 
-def run_cycle(cfg: Config, now_ts: int) -> dict:
+def run_cycle(cfg: Config, now_ts: int, publisher=None) -> dict:
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
@@ -60,6 +61,8 @@ def run_cycle(cfg: Config, now_ts: int) -> dict:
         spec = _get_spectrum(cfg, band, brange)
         occupancy[band] = _occupancy(spec, cfg)
         spectrum_summary[band] = _downsample(spec)
+        if publisher is not None:
+            publisher.publish_spectrum(now_ts, band, brange[0], brange[1], _downsample(spec, 128))
 
         cands = find_candidates(
             spec, cfg.thresholds.snr_threshold_db, cfg.thresholds.min_bandwidth_mhz
@@ -88,7 +91,8 @@ def run_cycle(cfg: Config, now_ts: int) -> dict:
 
     payload = build_payload(cfg.scanner_id, now_ts, detections, occupancy, spectrum_summary)
     write_state(cfg.state_path, payload)
-    post_telemetry(cfg.server_url, cfg.server_token, cfg.scanner_id, payload)
+    if publisher is not None:
+        publisher.publish_detection(now_ts, detections, occupancy)
     return payload
 
 
@@ -100,10 +104,22 @@ def main() -> None:
         server = make_local_server(cfg.local_http_host, cfg.local_http_port, holder)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         LOG.info("local JSON endpoint on http://%s:%d/", cfg.local_http_host, cfg.local_http_port)
+    publisher = None
+    if cfg.mqtt_enabled:
+        try:
+            publisher = MqttPublisher(
+                cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_user, cfg.mqtt_pass,
+                cfg.scanner_id, cfg.mqtt_keepalive,
+            )
+            publisher.connect(int(time.time()))
+            LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
+        except Exception:
+            LOG.exception("MQTT connect failed; continuing without publishing")
+            publisher = None
     backoff = 1.0
     while True:
         try:
-            payload = run_cycle(cfg, now_ts=int(time.time()))
+            payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher)
             holder.payload = payload
             backoff = 1.0
         except Exception:

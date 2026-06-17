@@ -33,16 +33,28 @@ def _config(tmp_path):
     c.source = "replay"
     c.fixtures_dir = str(tmp_path)
     c.state_path = str(tmp_path / "scan.json")
-    c.server_url = "http://127.0.0.1:1"        # unreachable -> POST silently fails
     c.bands = {"5.8G": (5645.0, 5945.0)}        # single band for the test
     return c
+
+
+class _FakePub:
+    def __init__(self):
+        self.spectra = []        # (ts, band, low, high, psd)
+        self.detections = []     # (ts, detections, occupancy)
+
+    def publish_spectrum(self, ts, band_id, low_mhz, high_mhz, psd):
+        self.spectra.append((ts, band_id, low_mhz, high_mhz, psd))
+
+    def publish_detection(self, ts, detections, occupancy):
+        self.detections.append((ts, detections, occupancy))
 
 
 def test_run_cycle_end_to_end(tmp_path):
     _write_fixtures(tmp_path)
     cfg = _config(tmp_path)
+    pub = _FakePub()
 
-    payload = main.run_cycle(cfg, now_ts=1718530000)
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=pub)
 
     assert payload["scanner_id"] == "scan-01"
     assert len(payload["detections"]) == 1
@@ -54,3 +66,12 @@ def test_run_cycle_end_to_end(tmp_path):
 
     saved = json.loads((tmp_path / "scan.json").read_text(encoding="utf-8"))
     assert saved == payload
+
+    # one self-describing spectrum frame per band, published with the band's range
+    assert len(pub.spectra) == len(cfg.bands)
+    ts, band, low, high, psd = pub.spectra[0]
+    assert band == "5.8G" and low == 5645.0 and high == 5945.0
+    assert len(psd) > 0
+    # exactly one detection publish per cycle, carrying the occupancy map
+    assert len(pub.detections) == 1
+    assert pub.detections[0][2]["5.8G"] > 0.0
