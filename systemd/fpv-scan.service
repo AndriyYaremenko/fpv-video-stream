@@ -7,9 +7,13 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/fpv-video-stream/agent/scan
 Environment=SCAN_ID=scan-01
-Environment=SCAN_SERVER_URL=http://10.8.0.1:8080
 Environment=SCAN_SOURCE=live
 Environment=SCAN_STATE_PATH=/run/fpv-scan/scan.json
+# MQTT broker (scan data over WireGuard). Host is non-secret; the publish creds
+# (MQTT_PUB_USER=pub, MQTT_PUB_PASS=...) are secret — put them in /etc/fpv-scan.env
+# (not committed). The leading '-' lets the unit start even if that file is absent.
+Environment=SCAN_MQTT_HOST=10.8.0.1
+EnvironmentFile=-/etc/fpv-scan.env
 RuntimeDirectory=fpv-scan
 ExecStart=/opt/fpv-video-stream/agent/scan/.venv/bin/python -u main.py
 Restart=always
