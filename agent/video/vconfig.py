@@ -12,6 +12,8 @@ class VideoConfig:
     harm_snr_db: float = 6.0
     blank_frac: float = 0.18
     default_fs: float = 16_000_000.0
+    video_enabled: bool = True
+    emit_cooldown_s: float = 10.0
 
 
 def load_video_config(env=None):
@@ -34,4 +36,8 @@ def load_video_config(env=None):
         c.blank_frac = float(env["FPV_BLANK_FRAC"])
     if "FPV_DEFAULT_FS" in env:
         c.default_fs = float(env["FPV_DEFAULT_FS"])
+    if "FPV_VIDEO_ENABLED" in env:
+        c.video_enabled = env["FPV_VIDEO_ENABLED"].strip().lower() not in ("0", "false", "no", "")
+    if "FPV_EMIT_COOLDOWN_S" in env:
+        c.emit_cooldown_s = float(env["FPV_EMIT_COOLDOWN_S"])
     return c

@@ -25,3 +25,15 @@ def test_env_overrides():
     assert c.thumb_max_width == 240
     assert c.lpf_cutoff_hz == 4_000_000.0
     assert c.line_snr_db == 12.0 and c.harm_snr_db == 7.0
+
+
+def test_video_emit_defaults():
+    c = load_video_config(env={})
+    assert c.video_enabled is True
+    assert c.emit_cooldown_s == 10.0
+
+
+def test_video_emit_env_overrides():
+    c = load_video_config(env={"FPV_VIDEO_ENABLED": "0", "FPV_EMIT_COOLDOWN_S": "30"})
+    assert c.video_enabled is False
+    assert c.emit_cooldown_s == 30.0
