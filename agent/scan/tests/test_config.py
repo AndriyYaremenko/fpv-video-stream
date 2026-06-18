@@ -64,3 +64,17 @@ def test_rf_gain_config():
     assert c2.lna_gain == 24
     assert c2.vga_gain == 16
     assert c2.amp_enable == 1
+
+
+def test_rx5808_defaults_and_env():
+    c = load_config({})
+    assert c.rx5808_enabled is True
+    assert (c.rx5808_clk, c.rx5808_data, c.rx5808_le) == (5, 6, 13)
+    assert c.rx5808_dwell_s == 4.0 and c.rx5808_settle_ms == 35
+    c2 = load_config({
+        "RX5808_ENABLED": "0", "RX5808_CLK": "17", "RX5808_DATA": "27",
+        "RX5808_LE": "22", "RX5808_DWELL_S": "2.5", "RX5808_SETTLE_MS": "50",
+    })
+    assert c2.rx5808_enabled is False
+    assert (c2.rx5808_clk, c2.rx5808_data, c2.rx5808_le) == (17, 27, 22)
+    assert c2.rx5808_dwell_s == 2.5 and c2.rx5808_settle_ms == 50

@@ -182,3 +182,21 @@ def test_publish_video_topic_qos_retain():
 def test_publish_video_is_noop_when_not_connected():
     p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")     # never connect()
     p.publish_video(1, 5800.0, "PAL", 15625, 10.0, "x")        # must not raise
+
+
+def test_publish_rxtune_topic_qos_retain():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_rxtune(500, 5865, "A1", "detected", [5865, 5800])
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/rxtune"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    body = json.loads(payload)
+    assert body["scanner_id"] == "hackrf" and body["ts"] == 500
+    assert body["freq_mhz"] == 5865 and body["channel"] == "A1"
+    assert body["mode"] == "detected" and body["targets"] == [5865, 5800]
+
+
+def test_publish_rxtune_is_noop_when_not_connected():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
+    p.publish_rxtune(1, 5865, "A1", "scan", [])        # must not raise

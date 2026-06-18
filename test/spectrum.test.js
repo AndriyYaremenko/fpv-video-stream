@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor, frameCaption } from '../dashboard/public/spectrum.js';
+import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor, frameCaption, rxtuneCaption } from '../dashboard/public/spectrum.js';
 
 test('splitByKind separates scanners from cameras (missing kind = camera)', () => {
   const { cameras, scanners } = splitByKind([
@@ -73,4 +73,16 @@ test('psdColor returns an rgb() string and varies with power', () => {
 test('fmtFreq formats MHz with a Ukrainian unit and rounds', () => {
   assert.equal(fmtFreq(5800), '5800 МГц');
   assert.equal(fmtFreq(5800.4), '5800 МГц');
+});
+
+test('rxtuneCaption shows freq, channel, mode', () => {
+  const c = rxtuneCaption({ freq_mhz: 5865, channel: 'A1', mode: 'scan' });
+  assert.match(c, /RX5808/);
+  assert.match(c, /5865/);
+  assert.match(c, /A1/);
+  assert.match(c, /scan/);
+});
+
+test('rxtuneCaption is empty for nullish input', () => {
+  assert.equal(rxtuneCaption(null), '');
 });

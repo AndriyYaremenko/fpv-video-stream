@@ -123,3 +123,34 @@ def test_run_cycle_skips_video_for_non_analog(tmp_path, monkeypatch):
     main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em)
 
     assert em.calls == []                         # non-analog -> no video emit
+
+
+class _FakeController:
+    def __init__(self):
+        self.targets = None
+
+    def update_targets(self, freqs):
+        self.targets = list(freqs)
+
+
+def test_run_cycle_feeds_rx5808_analog_58(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    ctl = _FakeController()
+    monkeypatch.setattr(main, "classify", lambda f, t: ("analog", 0.9))
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), controller=ctl)
+
+    assert ctl.targets is not None and len(ctl.targets) == 1
+    assert abs(ctl.targets[0] - 5800.0) < 2.0
+
+
+def test_run_cycle_rx5808_empty_when_not_analog(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    ctl = _FakeController()
+    monkeypatch.setattr(main, "classify", lambda f, t: ("digital", 0.7))
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), controller=ctl)
+
+    assert ctl.targets == []
