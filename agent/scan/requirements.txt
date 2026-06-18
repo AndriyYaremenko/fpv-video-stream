@@ -1,5 +1,11 @@
 numpy>=1.26
 paho-mqtt>=2.0
 Pillow>=10.0
-lgpio>=0.2; platform_machine=="aarch64" or platform_machine=="armv7l"
+# lgpio (RX5808 GPIO, Pi only) is NOT pip-installable on the deploy Pi (no wheel; the source
+# build fails). It is provided by the system package and linked into this venv instead:
+#   sudo apt-get install -y python3-lgpio
+#   SP=<venv>/lib/python3.13/site-packages
+#   ln -sf /usr/lib/python3/dist-packages/lgpio.py "$SP/lgpio.py"
+#   ln -sf /usr/lib/python3/dist-packages/_lgpio.*.so "$SP/"
+# The scan service imports lgpio lazily and is guarded, so its absence only disables RX5808.
 pytest>=8.0
