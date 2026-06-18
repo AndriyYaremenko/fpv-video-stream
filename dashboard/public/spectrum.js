@@ -1,11 +1,6 @@
 import { detectionKey } from './alert.js';
 // dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + DOM render (browser only).
 
-export const BAND_RANGES = {
-  '1.2G': [1080, 1360],
-  '2.4G': [2370, 2510],
-  '5.8G': [5645, 5945],
-};
 
 export function splitByKind(devices) {
   const cameras = [];
@@ -44,13 +39,26 @@ export function psdToPoints(psd, width, height, dbMin = -100, dbMax = -20) {
   });
 }
 
-// X pixel for a detection center frequency within a band's range (clamped to [0, width]).
-export function detectionX(centerMhz, band, width) {
-  const range = BAND_RANGES[band];
-  if (!range) return 0;
-  const [lo, hi] = range;
-  const frac = (centerMhz - lo) / ((hi - lo) || 1);
+// X pixel for a detection center frequency within an explicit band range (clamped to [0, width]).
+export function detectionX(centerMhz, lowMhz, highMhz, width) {
+  const frac = (centerMhz - lowMhz) / ((highMhz - lowMhz) || 1);
   return Math.max(0, Math.min(width, frac * width));
+}
+
+// Map a dBm value to a CSS color on the spectrum scale (noise = dark blue → strong = red).
+export function psdColor(db, dbMin = -100, dbMax = -20) {
+  const span = (dbMax - dbMin) || 1;
+  const t = Math.max(0, Math.min(1, (db - dbMin) / span));
+  const stops = [[2, 2, 17], [23, 118, 102], [42, 170, 102], [255, 221, 51], [255, 51, 51]];
+  const seg = t * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(seg));
+  const f = seg - i;
+  const [r1, g1, b1] = stops[i];
+  const [r2, g2, b2] = stops[i + 1];
+  const r = Math.round(r1 + (r2 - r1) * f);
+  const g = Math.round(g1 + (g2 - g1) * f);
+  const b = Math.round(b1 + (b2 - b1) * f);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 // ---- DOM rendering (browser only; not unit-tested, validated with `node --check` + manual) ----

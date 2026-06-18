@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, BAND_RANGES } from '../dashboard/public/spectrum.js';
+import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor } from '../dashboard/public/spectrum.js';
 
 test('splitByKind separates scanners from cameras (missing kind = camera)', () => {
   const { cameras, scanners } = splitByKind([
@@ -35,14 +35,20 @@ test('psdToPoints clamps out-of-range power into the box', () => {
   for (const p of pts) assert.ok(p.y >= 0 && p.y <= 40);
 });
 
-test('detectionX maps center freq within band and clamps out-of-range', () => {
-  assert.ok(Math.abs(detectionX(5795, '5.8G', 300) - 150) < 1); // band 5645..5945, mid -> 150
-  assert.equal(detectionX(1000, '5.8G', 300), 0);               // below -> 0
-  assert.equal(detectionX(9999, '5.8G', 300), 300);             // above -> width
+test('detectionX maps center freq within an explicit band range and clamps', () => {
+  assert.ok(Math.abs(detectionX(5795, 5645, 5945, 300) - 150) < 1); // mid -> 150
+  assert.equal(detectionX(1000, 5645, 5945, 300), 0);               // below -> 0
+  assert.equal(detectionX(9999, 5645, 5945, 300), 300);             // above -> width
 });
 
-test('BAND_RANGES covers the three FPV bands', () => {
-  assert.deepEqual(Object.keys(BAND_RANGES).sort(), ['1.2G', '2.4G', '5.8G']);
+test('psdColor clamps below/above the range to the endpoint colors', () => {
+  assert.equal(psdColor(-200), psdColor(-100));   // clamp low
+  assert.equal(psdColor(0), psdColor(-20));        // clamp high
+});
+
+test('psdColor returns an rgb() string and varies with power', () => {
+  assert.match(psdColor(-60), /^rgb\(\d+, ?\d+, ?\d+\)$/);
+  assert.notEqual(psdColor(-90), psdColor(-30));
 });
 
 test('fmtFreq formats MHz with a Ukrainian unit and rounds', () => {
