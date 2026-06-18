@@ -39,6 +39,10 @@ def detect_standard(baseband, fs, forced=None, line_snr_db=10.0, harm_snr_db=6.0
         return StdResult(None, 0, -np.inf, -np.inf)
     spec = np.abs(np.fft.rfft(bb * np.hanning(n)))
     freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    # Auto PAL/NTSC discrimination relies on the 109 Hz gap between 15625 and 15734;
+    # the +/-2-bin peak window only resolves them when bin_hz = fs/n is small enough
+    # (fine at the real operating points: degraded n~333k, normal n~3.2M). On a tie at
+    # tiny n the first candidate (PAL) wins.
     candidates = [forced.upper()] if forced else ["PAL", "NTSC"]
     best = None
     best_any = StdResult(None, 0, -np.inf, -np.inf)

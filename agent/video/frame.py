@@ -52,6 +52,8 @@ def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18):
 
 def laplacian_var(img):
     """Sharpness metric: variance of a 4-neighbour Laplacian."""
+    if img.size == 0:
+        return 0.0          # empty frame has no sharpness; avoids a NaN/RuntimeWarning
     lap = (-4.0 * img
            + np.roll(img, 1, 0) + np.roll(img, -1, 0)
            + np.roll(img, 1, 1) + np.roll(img, -1, 1))

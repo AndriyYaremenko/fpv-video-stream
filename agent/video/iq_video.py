@@ -38,6 +38,11 @@ def process(iq_path, fs, center_hz, std, vcfg, scfg, now_ts):
     frame = pick_sharpest(
         reconstruct_frames(bb, fs, res.standard, vcfg.frame_width, vcfg.blank_frac)
     )
+    if frame.size == 0:
+        # Sync gate passed but too few samples to slice even one line — nothing to render.
+        LOG.warning("status=error center_mhz=%.3f standard=%s reason=no_lines_reconstructed",
+                    center_mhz, res.standard)
+        return EXIT_ERROR
     luma = normalize_luma(frame)
     frame_path = os.path.join(vcfg.frames_dir, f"{now_ts}.png")
     save_full_png(luma, frame_path)

@@ -75,3 +75,19 @@ def test_std_auto_distinguishes_ntsc(monkeypatch, tmp_path):
                       ["--iq", iq_path, "--fs", str(fs), "--center", "1200e6", "--std", "auto"])
     assert code == 0
     assert sent["payload"]["standard"] == "NTSC"
+
+
+def test_empty_reconstruction_errors_without_crashing(monkeypatch, tmp_path):
+    # Sync gate passes but reconstruction yields no lines -> clean exit 1, no publish/crash.
+    fs = 8_000_000.0
+    iq_path = _write_iq(tmp_path, "PAL", fs)
+    published = {"called": False}
+    monkeypatch.setattr(iq_video, "reconstruct_frames",
+                        lambda *a, **k: [np.zeros((0, 720))])
+    monkeypatch.setattr(iq_video, "publish_video_once",
+                        lambda *a, **k: published.__setitem__("called", True) or True)
+    monkeypatch.setenv("FPV_FRAMES_DIR", str(tmp_path / "frames"))
+    code = iq_video.main(["--iq", iq_path, "--fs", str(fs), "--center", "5800e6"])
+    assert code == 1
+    assert published["called"] is False                       # nothing published
+    assert not os.path.isdir(str(tmp_path / "frames"))        # nothing saved
