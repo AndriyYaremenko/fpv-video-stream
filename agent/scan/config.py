@@ -41,6 +41,12 @@ class Config:
         "2.4G": (2370.0, 2510.0),
         "5.8G": (5645.0, 5945.0),
     })
+    rx5808_enabled: bool = True
+    rx5808_clk: int = 5
+    rx5808_data: int = 6
+    rx5808_le: int = 13
+    rx5808_dwell_s: float = 4.0
+    rx5808_settle_ms: int = 35
     thresholds: Thresholds = field(default_factory=Thresholds)
 
 
@@ -69,4 +75,16 @@ def load_config(env: Optional[dict] = None) -> Config:
         c.vga_gain = int(env["SCAN_VGA"])
     if "SCAN_AMP" in env:
         c.amp_enable = int(env["SCAN_AMP"])
+    if "RX5808_ENABLED" in env:
+        c.rx5808_enabled = env["RX5808_ENABLED"].strip().lower() not in ("0", "false", "no", "")
+    if "RX5808_CLK" in env:
+        c.rx5808_clk = int(env["RX5808_CLK"])
+    if "RX5808_DATA" in env:
+        c.rx5808_data = int(env["RX5808_DATA"])
+    if "RX5808_LE" in env:
+        c.rx5808_le = int(env["RX5808_LE"])
+    if "RX5808_DWELL_S" in env:
+        c.rx5808_dwell_s = float(env["RX5808_DWELL_S"])
+    if "RX5808_SETTLE_MS" in env:
+        c.rx5808_settle_ms = int(env["RX5808_SETTLE_MS"])
     return c
