@@ -163,3 +163,22 @@ def test_default_client_factory_passes_callback_api_version_v1(monkeypatch):
 
     assert calls["args"][0] == _CB.VERSION1       # first positional = CallbackAPIVersion.VERSION1
     assert calls["kwargs"].get("client_id") == "scan-hackrf"
+
+
+def test_publish_video_topic_qos_retain():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_video(400, 5800.0, "PAL", 15625, 18.3, "QUJD")
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/video"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    body = json.loads(payload)
+    assert body["scanner_id"] == "hackrf"
+    assert body["ts"] == 400 and body["center_mhz"] == 5800.0
+    assert body["standard"] == "PAL" and body["line_hz"] == 15625
+    assert body["sync_snr_db"] == 18.3 and body["frame_png_b64"] == "QUJD"
+
+
+def test_publish_video_is_noop_when_not_connected():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")     # never connect()
+    p.publish_video(1, 5800.0, "PAL", 15625, 10.0, "x")        # must not raise

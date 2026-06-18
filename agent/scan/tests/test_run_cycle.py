@@ -88,3 +88,38 @@ def test_run_cycle_without_publisher_still_writes_state(tmp_path):
     assert len(payload["detections"]) == 1
     saved = json.loads((tmp_path / "scan.json").read_text(encoding="utf-8"))
     assert saved == payload
+
+
+class _FakeEmitter:
+    def __init__(self):
+        self.calls = []      # (fs, center_mhz, now_ts)
+
+    def maybe_emit(self, iq, fs, center_mhz, now_ts):
+        self.calls.append((fs, center_mhz, now_ts))
+        return "published"
+
+
+def test_run_cycle_emits_video_for_analog_only(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()
+    monkeypatch.setattr(main, "classify", lambda feat, thr: ("analog", 0.9))
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em)
+
+    assert len(em.calls) == 1                     # one analog candidate in the fixture
+    fs, center_mhz, now_ts = em.calls[0]
+    assert fs == cfg.dwell_sample_rate_hz
+    assert abs(center_mhz - 5800.0) < 2.0
+    assert now_ts == 1718530000
+
+
+def test_run_cycle_skips_video_for_non_analog(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()
+    monkeypatch.setattr(main, "classify", lambda feat, thr: ("digital", 0.7))
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em)
+
+    assert em.calls == []                         # non-analog -> no video emit

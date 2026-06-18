@@ -100,3 +100,11 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 #sound-toggle.armed { color: var(--on); border-color: var(--on); }
 .scan-table tr.is-new { background: rgba(244,183,64,.18); }
 .scan-table tr.is-new td { font-weight: 600; }
+
+/* recovered analog-video frame */
+.scan-frame-wrap { margin:.5rem 0; }
+.scan-frame { max-width:320px; width:100%; border:1px solid var(--line); border-radius:4px; cursor:pointer; display:block; }
+.scan-frame-cap { color:#9aa4b2; font-size:.8rem; margin-top:.25rem; }
+.modal-image { max-width:92vw; max-height:82vh; background:#000; image-rendering:pixelated; }
+.modal-image.hidden { display:none; }
+.modal video.hidden { display:none; }

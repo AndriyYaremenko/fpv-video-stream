@@ -52,7 +52,7 @@ def _downsample(spec: Spectrum, points: int = 64) -> list:
     return [round(float(p[i]), 1) for i in idx]
 
 
-def run_cycle(cfg: Config, now_ts: int, publisher=None) -> dict:
+def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None) -> dict:
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
@@ -89,6 +89,12 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None) -> dict:
                 channel=nearest_channel(c.center_mhz),
             ))
 
+            if emitter is not None and cls == "analog":
+                try:
+                    emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts)
+                except Exception:
+                    LOG.exception("video emit failed")
+
     payload = build_payload(cfg.scanner_id, now_ts, detections, occupancy, spectrum_summary)
     write_state(cfg.state_path, payload)
     if publisher is not None:
@@ -116,10 +122,20 @@ def main() -> None:
         except Exception:
             LOG.exception("MQTT connect failed; continuing without publishing")
             publisher = None
+    emitter = None
+    try:
+        import video_emit                       # adds ../video to sys.path as a side effect
+        from vconfig import load_video_config
+        vcfg = load_video_config()
+        if vcfg.video_enabled:
+            emitter = video_emit.VideoEmitter(publisher, vcfg, vcfg.emit_cooldown_s)
+            LOG.info("video emitter enabled (cooldown=%.0fs)", vcfg.emit_cooldown_s)
+    except Exception:
+        LOG.exception("video emitter init failed; continuing without video")
     backoff = 1.0
     while True:
         try:
-            payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher)
+            payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher, emitter=emitter)
             holder.payload = payload
             backoff = 1.0
         except Exception:

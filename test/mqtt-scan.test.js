@@ -48,3 +48,20 @@ test('reduce accepts an already-parsed object payload', () => {
   const s = reduce(emptyStore(), 'fpv/hackrf/status', { online: false, ts: 2 });
   assert.equal(s.hackrf.online, false);
 });
+
+test('reduce stores the latest video frame', () => {
+  const s = reduce(emptyStore(), 'fpv/hackrf/video', JSON.stringify({
+    ts: 1718700000, center_mhz: 5800, standard: 'PAL', line_hz: 15625,
+    sync_snr_db: 18.3, frame_png_b64: 'QUJD',
+  }));
+  assert.equal(s.hackrf.video.standard, 'PAL');
+  assert.equal(s.hackrf.video.center_mhz, 5800);
+  assert.equal(s.hackrf.video.line_hz, 15625);
+  assert.equal(s.hackrf.video.sync_snr_db, 18.3);
+  assert.equal(s.hackrf.video.frame_png_b64, 'QUJD');
+});
+
+test('reduce video defaults frame to empty string when missing', () => {
+  const s = reduce(emptyStore(), 'fpv/hackrf/video', JSON.stringify({ ts: 1, standard: 'NTSC' }));
+  assert.equal(s.hackrf.video.frame_png_b64, '');
+});

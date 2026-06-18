@@ -14,7 +14,12 @@ Environment=SCAN_STATE_PATH=/run/fpv-scan/scan.json
 # (not committed). The leading '-' lets the unit start even if that file is absent.
 Environment=SCAN_MQTT_HOST=10.8.0.1
 EnvironmentFile=-/etc/fpv-scan.env
+# Analog-video frame extraction (reuses the live MQTT publisher -> fpv/<id>/video).
+# Enabled by default; set FPV_VIDEO_ENABLED=0 to disable, FPV_EMIT_COOLDOWN_S to retune
+# the per-channel throttle (default 10s). Full-res PNGs land in FPV_FRAMES_DIR.
+Environment=FPV_FRAMES_DIR=/var/lib/fpv/frames
 RuntimeDirectory=fpv-scan
+StateDirectory=fpv
 ExecStart=/opt/fpv-video-stream/agent/scan/.venv/bin/python -u main.py
 Restart=always
 RestartSec=3
