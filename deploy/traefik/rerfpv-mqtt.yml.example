@@ -1,8 +1,12 @@
 # Sample traefik file-provider config to expose the mosquitto WebSocket as WSS.
 # Deploy: copy to traefik's watched dir (e.g. /root/custom/rerfpv-mqtt.yml). traefik hot-reloads.
 # The cert for rerfpv.ksm.in.ua (issued for the dashboard route) covers this same host.
-# Verify/refresh the wg-easy bridge IP (172.17.0.3) with:
-#   docker inspect wg-easy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+#
+# IMPORTANT — traefik parses file-provider .yml as a Go template, so do NOT put Go-template
+# syntax (double curly braces) in comments here or the whole file fails to load. To find the
+# wg-easy bridge IP, run this on the host (not in this file):
+#   docker inspect wg-easy --format '<dot>range .NetworkSettings.Networks<slash>...'
+# i.e. `docker inspect wg-easy -f '{{ range ... }}'` — keep that command OUT of this file.
 
 http:
   middlewares:
@@ -14,7 +18,10 @@ http:
     rerfpv-mqtt:
       entryPoints:
         - websecure
-      rule: "Host(`rerfpv.ksm.in.ua`) && PathPrefix(`/mqtt`)"
+      # Use Path (exact), NOT PathPrefix: PathPrefix(`/mqtt`) also matches the dashboard's
+      # own `/mqtt-scan.js` module and routes it to the broker (502). The browser connects
+      # to exactly wss://rerfpv.ksm.in.ua/mqtt, so an exact Path match is what we want.
+      rule: "Host(`rerfpv.ksm.in.ua`) && Path(`/mqtt`)"
       priority: 100          # higher than the catch-all dashboard router
       middlewares:
         - mqtt-strip
