@@ -9,7 +9,6 @@ const registry = {
 const config = {
   dashUser: 'op', dashPass: 'pw', sessionSecret: 'test-secret',
   webrtcBase: 'http://10.8.0.1:8889', readUser: 'viewer', readPass: 'rpw',
-  telemetryToken: '',
   mqtt: { url: 'wss://rerfpv.ksm.in.ua/mqtt', user: 'sub', pass: 'subpw' },
   pushOpts: { wgIp: '10.8.0.1', rtspPort: 8554, srtPort: 8890, videoDevice: '/dev/video0', framerate: 30, videoSize: '720x576', bitrate: '2M' },
   persistRegistry: () => {},
@@ -88,22 +87,6 @@ test('authed /api/config exposes the read creds for WHEP', async () => {
   server.close();
 });
 
-test('telemetry hook stores last value and surfaces it on devices', async () => {
-  const { server, base } = await startServer();
-  await fetch(`${base}/api/telemetry/pi-01`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rssi: -60, alarm: false }),
-  });
-  const login = await fetch(`${base}/login`, {
-    method: 'POST', redirect: 'manual',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'user=op&pass=pw',
-  });
-  const cookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
-  const res = await fetch(`${base}/api/devices`, { headers: { cookie } });
-  const body = await res.json();
-  assert.equal(body[0].telemetry.rssi, -60);
-  server.close();
-});
 
 test('POST /api/devices requires auth', async () => {
   const { server, base } = await startWith({ devices: [] });
@@ -201,51 +184,28 @@ test('DELETE /api/devices/:id removes the device and persists; 404 if missing', 
   server.close();
 });
 
-test('POST /api/devices with kind=scanner returns no push, includes telemetry hint', async () => {
+test('POST /api/devices with kind=scanner returns no push, includes the MQTT topic prefix', async () => {
   const reg = { read_user: 'viewer', read_pass: 'rpw', devices: [] };
   const { server, base } = await startWith(reg);
   const cookie = await login(base);
   const res = await fetch(`${base}/api/devices`, {
     method: 'POST', headers: { cookie, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: 'scan-01', name: 'Scanner', kind: 'scanner' }),
+    body: JSON.stringify({ id: 'hackrf', name: 'Scanner', kind: 'scanner' }),
   });
   const body = await res.json();
   assert.equal(res.status, 201);
   assert.equal(body.device.kind, 'scanner');
   assert.equal(body.push, undefined);
-  assert.equal(body.scanner.telemetryPath, '/api/telemetry/scan-01');
+  assert.equal(body.scanner.topicPrefix, 'fpv/hackrf');
   server.close();
 });
 
-test('scanner online is derived from telemetry freshness', async () => {
-  const reg = { read_user: 'viewer', read_pass: 'rpw',
-    devices: [{ id: 'scan-01', name: 'S', location: '', kind: 'scanner', publish_pass: 'p' }] };
-  const { server, base } = await startWith(reg);
-  const cookie = await login(base);
-  let body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
-  assert.equal(body.find((d) => d.id === 'scan-01').online, false);
-  await fetch(`${base}/api/telemetry/scan-01`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ detections: [], occupancy: {}, spectrum: {} }),
+test('POST /api/telemetry is removed (404)', async () => {
+  const { server, base } = await startServer();
+  const res = await fetch(`${base}/api/telemetry/pi-01`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
   });
-  body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
-  const scan = body.find((d) => d.id === 'scan-01');
-  assert.equal(scan.online, true);
-  assert.equal(scan.bitrateKbps, null);
-  server.close();
-});
-
-test('scanner freshness window is configurable (stale telemetry -> offline)', async () => {
-  const reg = { read_user: 'viewer', read_pass: 'rpw',
-    devices: [{ id: 'scan-01', name: 'S', location: '', kind: 'scanner', publish_pass: 'p' }] };
-  const { server, base } = await startWith(reg, { ...config, scannerFreshMs: 1 }); // 1ms window
-  const cookie = await login(base);
-  await fetch(`${base}/api/telemetry/scan-01`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ detections: [] }),
-  });
-  await new Promise((r) => setTimeout(r, 25)); // exceed the 1ms freshness window
-  const body = await (await fetch(`${base}/api/devices`, { headers: { cookie } })).json();
-  assert.equal(body.find((d) => d.id === 'scan-01').online, false); // stale -> offline
+  assert.equal(res.status, 404);
   server.close();
 });
 

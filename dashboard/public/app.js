@@ -2,6 +2,7 @@
 import { startWhep } from '/whep.js';
 import { splitByKind, renderSpectrum } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
+import { MqttScanClient } from '/mqtt-scan.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
@@ -10,6 +11,8 @@ const grid = document.getElementById('grid');
 const spectrumPanel = document.getElementById('spectrum-panel');
 const alerter = new SoundAlerter();
 let prevScanKeys = null;
+const scanClient = new MqttScanClient();
+let scannersFromRegistry = [];
 
 spectrumPanel.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
@@ -137,16 +140,13 @@ function tileEl(d) {
 
 function render(devices) {
   const { cameras, scanners } = splitByKind(devices);
+  scannersFromRegistry = scanners;
   for (const d of devices) lastById.set(d.id, d);
 
   document.getElementById('summary').textContent =
     `${cameras.filter((d) => d.online).length}/${cameras.length} онлайн`;
 
-  const allDets = scanners.flatMap((s) => (s.telemetry && s.telemetry.detections) || []);
-  const { keys, newKeys } = diffNewKeys(prevScanKeys, allDets);
-  if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
-  prevScanKeys = scanners.length ? keys : null;   // no scanners -> reset baseline so reconnect is silent
-  renderSpectrumPanel(scanners, new Set(newKeys));
+  renderScan();   // draw from the MQTT store (presence/data), using the latest registry metadata
 
   for (const d of cameras) {
     const el = tileEl(d);
@@ -184,14 +184,20 @@ function render(devices) {
   }
 }
 
-function renderSpectrumPanel(scanners, highlightKeys = new Set()) {
+function renderScan() {
+  const scanners = scannersFromRegistry;
   if (!scanners.length) {
     spectrumPanel.classList.add('hidden');
     spectrumPanel.innerHTML = '';
     return;
   }
+  const store = scanClient.store;
+  const allDets = scanners.flatMap((s) => (store[s.id] && store[s.id].detection && store[s.id].detection.detections) || []);
+  const { keys, newKeys } = diffNewKeys(prevScanKeys, allDets);
+  if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
+  prevScanKeys = Object.keys(store).length ? keys : null;
   spectrumPanel.classList.remove('hidden');
-  renderSpectrum(spectrumPanel, scanners, highlightKeys);
+  renderSpectrum(spectrumPanel, scanners, store, new Set(newKeys));
 }
 
 async function startPlayer(d) {
@@ -356,9 +362,10 @@ function scannerInfoModal(device, isNew) {
   showModal(`
     <h2>${isNew ? '✅ Сканер створено' : '📡 Сканер'}: ${escapeHtml(device.id)}</h2>
     <p class="muted">${escapeHtml(device.name || '')}${device.location ? ` · ${escapeHtml(device.location)}` : ''}</p>
-    <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує.</p>
-    ${credRow('SCAN_ID на Pi', device.id)}
-    ${credRow('Ендпойнт телеметрії', `/api/telemetry/${device.id}`)}
+    <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує. Дані йдуть у MQTT-брокер.</p>
+    ${credRow('SCAN_ID на Pi (= id топіка)', device.id)}
+    ${credRow('MQTT-топіки', `fpv/${device.id}/{spectrum,detection,status}`)}
+    <p class="muted small">На Pi задай SCAN_MQTT_HOST + MQTT_PUB_USER/PASS (див. deploy-доку). SCAN_ID має дорівнювати id вище.</p>
     <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
 }
 
@@ -400,4 +407,8 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
   const first = await fetch('/api/devices').then((r) => r.json());
   render(first);
   connectSSE();
+  try {
+    const mq = await fetch('/api/mqtt').then((r) => (r.ok ? r.json() : null));
+    if (mq && mq.url) scanClient.connect(mq, () => renderScan());
+  } catch { /* no broker creds -> scan panel stays empty until available */ }
 })();
