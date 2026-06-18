@@ -133,19 +133,20 @@ class _FakeController:
         self.targets = list(freqs)
 
 
-def test_run_cycle_feeds_rx5808_analog_58(tmp_path, monkeypatch):
+def test_run_cycle_feeds_rx5808_carriers(tmp_path):
     _write_fixtures(tmp_path)
     cfg = _config(tmp_path)
     ctl = _FakeController()
-    monkeypatch.setattr(main, "classify", lambda f, t: ("analog", 0.9))
 
     main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), controller=ctl)
 
     assert ctl.targets is not None and len(ctl.targets) == 1
-    assert abs(ctl.targets[0] - 5800.0) < 2.0
+    assert abs(ctl.targets[0] - 5800.0) < 2.0      # carrier center of the fixture's 5.8 signal
 
 
-def test_run_cycle_rx5808_empty_when_not_analog(tmp_path, monkeypatch):
+def test_run_cycle_feeds_rx5808_carriers_regardless_of_class(tmp_path, monkeypatch):
+    # The RX5808 feed comes from the carrier finder, NOT classify: a non-analog class
+    # must still target the carrier (the receiver demodulates whatever is there).
     _write_fixtures(tmp_path)
     cfg = _config(tmp_path)
     ctl = _FakeController()
@@ -153,4 +154,5 @@ def test_run_cycle_rx5808_empty_when_not_analog(tmp_path, monkeypatch):
 
     main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), controller=ctl)
 
-    assert ctl.targets == []
+    assert len(ctl.targets) == 1
+    assert abs(ctl.targets[0] - 5800.0) < 2.0
