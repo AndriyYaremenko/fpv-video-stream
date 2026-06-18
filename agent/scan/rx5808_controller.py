@@ -19,7 +19,9 @@ class Rx5808Controller:
         self._channels = list(channels)
         self.dwell_s = dwell_s
         self.settle_ms = settle_ms
-        self._clock = clock or time.monotonic
+        # Source of the published rxtune timestamp — wall-clock epoch (matches every other
+        # topic's `ts`). Injectable for deterministic tests. NOT the dwell timer (that is _sleep).
+        self._clock = clock or time.time
         self._sleep = sleep or time.sleep
         self._targets = []                       # [(name, freq)]
         self._lock = threading.Lock()
@@ -42,6 +44,8 @@ class Rx5808Controller:
         with self._lock:
             lst = self._targets or self._channels
             mode = "detected" if self._targets else "scan"
+            if not lst:
+                return None, None, mode, []
             self._idx = (self._idx + 1) % len(lst)
             name, freq = lst[self._idx]
             target_freqs = [f for _, f in self._targets]
@@ -61,6 +65,8 @@ class Rx5808Controller:
 
     def run_once(self):
         name, freq, mode, target_freqs = self._next()
+        if freq is None:                          # no channels configured — nothing to tune
+            return
         self.tune(name, freq, mode, target_freqs, ts=int(self._clock()))
 
     def run(self):

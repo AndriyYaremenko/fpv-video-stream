@@ -13,10 +13,10 @@ class FakeBackend:
 
 class FakePub:
     def __init__(self):
-        self.tunes = []      # (freq, channel, mode, targets-tuple)
+        self.tunes = []      # (freq, channel, mode, targets-tuple, ts)
 
     def publish_rxtune(self, ts, freq_mhz, channel, mode, targets):
-        self.tunes.append((freq_mhz, channel, mode, tuple(targets)))
+        self.tunes.append((freq_mhz, channel, mode, tuple(targets), ts))
 
 
 def _ctrl(pub, backend=None):
@@ -49,6 +49,14 @@ def test_out_of_range_targets_fall_back_to_scan():
     c.update_targets([5500.0])                  # outside tolerance -> no channels
     c.run_once()
     assert pub.tunes[0][2] == "scan"
+
+
+def test_published_ts_is_wall_clock_from_injected_clock():
+    pub = FakePub()
+    c = RC.Rx5808Controller(FakeBackend(), pub, "hackrf", RX5808_CHANNELS,
+                            dwell_s=0, settle_ms=0, clock=lambda: 1718700000, sleep=lambda s: None)
+    c.run_once()
+    assert pub.tunes[0][4] == 1718700000     # ts is the wall-clock epoch (matches other topics)
 
 
 def test_tune_error_is_swallowed_no_publish():
