@@ -18,8 +18,12 @@ class Thresholds:
 @dataclass
 class Config:
     scanner_id: str = "scan-01"
-    server_url: str = "http://10.8.0.1:8080"
-    server_token: str = ""
+    mqtt_enabled: bool = True
+    mqtt_host: str = "10.8.0.1"
+    mqtt_port: int = 1883
+    mqtt_user: str = "pub"
+    mqtt_pass: str = ""
+    mqtt_keepalive: int = 60
     source: str = "live"                       # "live" | "replay"
     fixtures_dir: str = ""
     state_path: str = "/run/fpv-scan/scan.json"
@@ -44,9 +48,16 @@ def load_config(env: Optional[dict] = None) -> Config:
     env = os.environ if env is None else env
     c = Config()
     c.scanner_id = env.get("SCAN_ID", c.scanner_id)
-    c.server_url = env.get("SCAN_SERVER_URL", c.server_url)
-    c.server_token = env.get("SCAN_SERVER_TOKEN", c.server_token)
     c.source = env.get("SCAN_SOURCE", c.source)
+    c.mqtt_host = env.get("SCAN_MQTT_HOST", c.mqtt_host)
+    if "SCAN_MQTT_PORT" in env:
+        c.mqtt_port = int(env["SCAN_MQTT_PORT"])
+    c.mqtt_user = env.get("MQTT_PUB_USER", c.mqtt_user)
+    c.mqtt_pass = env.get("MQTT_PUB_PASS", c.mqtt_pass)
+    if "SCAN_MQTT_KEEPALIVE" in env:
+        c.mqtt_keepalive = int(env["SCAN_MQTT_KEEPALIVE"])
+    if "SCAN_MQTT_ENABLED" in env:
+        c.mqtt_enabled = env["SCAN_MQTT_ENABLED"].strip().lower() not in ("0", "false", "no", "")
     c.fixtures_dir = env.get("SCAN_FIXTURES_DIR", c.fixtures_dir)
     c.state_path = env.get("SCAN_STATE_PATH", c.state_path)
     c.local_http_host = env.get("SCAN_HTTP_HOST", c.local_http_host)

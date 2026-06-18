@@ -16,14 +16,34 @@ def test_env_overrides():
     env = {
         "SCAN_ID": "scan-09",
         "SCAN_SOURCE": "replay",
-        "SCAN_SERVER_URL": "http://10.0.0.2:9090",
         "SCAN_FIXTURES_DIR": "/tmp/fx",
     }
     c = load_config(env)
     assert c.scanner_id == "scan-09"
     assert c.source == "replay"
-    assert c.server_url == "http://10.0.0.2:9090"
     assert c.fixtures_dir == "/tmp/fx"
+
+
+def test_mqtt_config():
+    c = load_config({})
+    assert c.mqtt_enabled is True
+    assert c.mqtt_host == "10.8.0.1"
+    assert c.mqtt_port == 1883
+    assert c.mqtt_user == "pub"
+    assert c.mqtt_pass == ""
+    c2 = load_config({
+        "SCAN_MQTT_HOST": "10.8.0.9", "SCAN_MQTT_PORT": "1884",
+        "MQTT_PUB_USER": "pi", "MQTT_PUB_PASS": "s3cret",
+        "SCAN_MQTT_KEEPALIVE": "30", "SCAN_MQTT_ENABLED": "0",
+    })
+    assert c2.mqtt_host == "10.8.0.9"
+    assert c2.mqtt_port == 1884
+    assert c2.mqtt_user == "pi"
+    assert c2.mqtt_pass == "s3cret"
+    assert c2.mqtt_keepalive == 30
+    assert c2.mqtt_enabled is False
+    # a truthy SCAN_MQTT_ENABLED keeps it on (guards the falsey-set boundary)
+    assert load_config({"SCAN_MQTT_ENABLED": "1"}).mqtt_enabled is True
 
 
 def test_http_endpoint_config():
