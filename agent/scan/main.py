@@ -56,6 +56,7 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
+    rx_carrier_centers = []
 
     for band, brange in cfg.bands.items():
         spec = _get_spectrum(cfg, band, brange)
@@ -68,6 +69,15 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
             spec, cfg.thresholds.snr_threshold_db, cfg.thresholds.min_bandwidth_mhz
         )
         cands.sort(key=lambda c: c.power_dbm, reverse=True)
+
+        if band == "5.8G":
+            # RX5808 targeting: any strong carrier on 5.8 (looser thresholds than the main
+            # detector), so narrow real FPV carriers are tuned even though they fail the
+            # wide analog-video gate. Independent of classify; main detection unchanged.
+            rx_carrier_centers = [
+                c.center_mhz for c in find_candidates(
+                    spec, cfg.rx5808_carrier_snr_db, cfg.rx5808_carrier_min_bw_mhz)
+            ]
 
         budget = cfg.max_dwells_per_cycle
         for i, c in enumerate(cands):
@@ -97,10 +107,7 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
 
     if controller is not None:
         try:
-            controller.update_targets(
-                [d.center_mhz for d in detections
-                 if d.band == "5.8G" and d.signal_class == "analog"]
-            )
+            controller.update_targets(rx_carrier_centers)
         except Exception:
             LOG.exception("rx5808 update_targets failed")
 
