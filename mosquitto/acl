@@ -4,6 +4,8 @@
 # topics denied. Edit both together.
 user pub
 topic write fpv/#
+topic read fpv/+/rxcmd
 
 user sub
 topic read fpv/#
+topic write fpv/+/rxcmd
