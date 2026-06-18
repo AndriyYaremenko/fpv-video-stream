@@ -6,3 +6,5 @@ node_modules/
 *.log
 runtime/
 agent/scan/.venv/
+mosquitto/passwd
+mosquitto/data/

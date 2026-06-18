@@ -1,0 +1,30 @@
+# Sample traefik file-provider config to expose the mosquitto WebSocket as WSS.
+# Deploy: copy to traefik's watched dir (e.g. /root/custom/rerfpv-mqtt.yml). traefik hot-reloads.
+# The cert for rerfpv.ksm.in.ua (issued for the dashboard route) covers this same host.
+# Verify/refresh the wg-easy bridge IP (172.17.0.3) with:
+#   docker inspect wg-easy --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+
+http:
+  middlewares:
+    mqtt-strip:
+      stripPrefix:
+        prefixes: ["/mqtt"]
+
+  routers:
+    rerfpv-mqtt:
+      entryPoints:
+        - websecure
+      rule: "Host(`rerfpv.ksm.in.ua`) && PathPrefix(`/mqtt`)"
+      priority: 100          # higher than the catch-all dashboard router
+      middlewares:
+        - mqtt-strip
+      service: service-rerfpv-mqtt
+      tls:
+        certResolver: letsEncrypt
+
+  services:
+    service-rerfpv-mqtt:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.3:9001"   # wg-easy bridge IP : mosquitto WS port
+        passHostHeader: true
