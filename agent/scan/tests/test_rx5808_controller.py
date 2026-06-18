@@ -106,3 +106,12 @@ def test_set_command_unknown_mode_ignored():
     c.set_command("bogus")
     c.run_once()
     assert pub.tunes[0][2] == "auto"     # unchanged
+
+
+def test_set_command_manual_unknown_channel_keeps_previous():
+    pub = FakePub(); c = _ctrl(pub)
+    c.set_command("manual", "A1")        # valid
+    c.set_command("manual", "BOGUS")     # unknown -> keep A1
+    c.run_once()
+    assert pub.tunes[0][1] == "A1"       # still A1
+    assert pub.tunes[0][2] == "manual"

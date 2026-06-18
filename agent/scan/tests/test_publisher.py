@@ -230,3 +230,14 @@ def test_on_message_swallows_bad_payload():
     p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
     p.on_command = lambda mode, channel: (_ for _ in ()).throw(AssertionError("should not be called"))
     p._on_message(None, None, _Msg(b"{not json"))      # must not raise / not dispatch
+
+
+def test_on_message_ignores_non_dict_payload():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
+    p.on_command = lambda mode, channel: (_ for _ in ()).throw(AssertionError("should not be called"))
+    p._on_message(None, None, _Msg(json.dumps(123)))     # valid JSON, not a dict -> ignored
+
+
+def test_on_message_noop_when_no_handler():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")   # on_command stays None
+    p._on_message(None, None, _Msg(json.dumps({"mode": "scan"})))   # must not raise

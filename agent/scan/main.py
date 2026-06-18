@@ -133,10 +133,8 @@ def main() -> None:
                 cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_user, cfg.mqtt_pass,
                 cfg.scanner_id, cfg.mqtt_keepalive,
             )
-            publisher.connect(int(time.time()))
-            LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
         except Exception:
-            LOG.exception("MQTT connect failed; continuing without publishing")
+            LOG.exception("MQTT publisher init failed; continuing without publishing")
             publisher = None
     emitter = None
     try:
@@ -164,9 +162,16 @@ def main() -> None:
     except Exception:
         LOG.exception("rx5808 controller init failed; continuing without it")
     if controller is not None and publisher is not None:
-        # Apply dashboard commands (fpv/<id>/rxcmd) to the controller. Set synchronously here,
-        # before the retained command's async delivery arrives via the paho loop thread.
+        # Apply dashboard commands (fpv/<id>/rxcmd). Wire BEFORE connect so a retained command —
+        # delivered when _on_connect subscribes — is dispatched, not dropped while on_command is unset.
         publisher.on_command = controller.set_command
+    if publisher is not None:
+        try:
+            publisher.connect(int(time.time()))
+            LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
+        except Exception:
+            LOG.exception("MQTT connect failed; continuing without publishing")
+            publisher = None
     backoff = 1.0
     while True:
         try:

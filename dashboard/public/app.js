@@ -31,7 +31,8 @@ spectrumPanel.addEventListener('click', (e) => {
     const rect = canvas.getBoundingClientRect();
     const lo = Number(canvas.dataset.lowMhz);
     const hi = Number(canvas.dataset.highMhz);
-    const freq = lo + (Math.max(0, e.clientX - rect.left) / rect.width) * (hi - lo);
+    const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
+    const freq = lo + (x / rect.width) * (hi - lo);
     const ch = nearestRxChannel(freq);
     if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
     return;
