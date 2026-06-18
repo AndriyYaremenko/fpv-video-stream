@@ -78,3 +78,12 @@ def test_rx5808_defaults_and_env():
     assert c2.rx5808_enabled is False
     assert (c2.rx5808_clk, c2.rx5808_data, c2.rx5808_le) == (17, 27, 22)
     assert c2.rx5808_dwell_s == 2.5 and c2.rx5808_settle_ms == 50
+
+
+def test_rx5808_carrier_thresholds_defaults_and_env():
+    c = load_config({})
+    assert c.rx5808_carrier_snr_db == 15.0
+    assert c.rx5808_carrier_min_bw_mhz == 0.5
+    c2 = load_config({"RX5808_CARRIER_SNR_DB": "18", "RX5808_CARRIER_MIN_BW_MHZ": "1.0"})
+    assert c2.rx5808_carrier_snr_db == 18.0
+    assert c2.rx5808_carrier_min_bw_mhz == 1.0

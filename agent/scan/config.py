@@ -47,6 +47,8 @@ class Config:
     rx5808_le: int = 13
     rx5808_dwell_s: float = 4.0
     rx5808_settle_ms: int = 35
+    rx5808_carrier_snr_db: float = 15.0
+    rx5808_carrier_min_bw_mhz: float = 0.5
     thresholds: Thresholds = field(default_factory=Thresholds)
 
 
@@ -87,4 +89,8 @@ def load_config(env: Optional[dict] = None) -> Config:
         c.rx5808_dwell_s = float(env["RX5808_DWELL_S"])
     if "RX5808_SETTLE_MS" in env:
         c.rx5808_settle_ms = int(env["RX5808_SETTLE_MS"])
+    if "RX5808_CARRIER_SNR_DB" in env:
+        c.rx5808_carrier_snr_db = float(env["RX5808_CARRIER_SNR_DB"])
+    if "RX5808_CARRIER_MIN_BW_MHZ" in env:
+        c.rx5808_carrier_min_bw_mhz = float(env["RX5808_CARRIER_MIN_BW_MHZ"])
     return c
