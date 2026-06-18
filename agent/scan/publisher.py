@@ -48,6 +48,7 @@ class MqttPublisher:
         self._t_spectrum = f"fpv/{scanner_id}/spectrum"
         self._t_detection = f"fpv/{scanner_id}/detection"
         self._t_status = f"fpv/{scanner_id}/status"
+        self._t_video = f"fpv/{scanner_id}/video"
         self._client = None
 
     def connect(self, ts):
@@ -87,6 +88,14 @@ class MqttPublisher:
         self._publish(
             self._t_detection,
             build_detection_payload(self.scanner_id, ts, detections, occupancy),
+            self.QOS_DETECTION,
+        )
+
+    def publish_video(self, ts, center_mhz, standard, line_hz, sync_snr_db, frame_png_b64):
+        self._publish(
+            self._t_video,
+            build_video_payload(self.scanner_id, ts, center_mhz, standard, line_hz,
+                                sync_snr_db, frame_png_b64),
             self.QOS_DETECTION,
         )
 
