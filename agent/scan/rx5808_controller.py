@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import threading
 import time
@@ -13,7 +14,7 @@ class Rx5808Controller:
     `update_targets` was given any; otherwise all configured channels. Never raises into callers."""
 
     def __init__(self, backend, publisher, scanner_id, channels, dwell_s,
-                 settle_ms=35, clock=None, sleep=None, rng=None):
+                 settle_ms=35, clock=None, sleep=None, rng=None, osd_file=""):
         self.backend = backend
         self.publisher = publisher
         self.scanner_id = scanner_id
@@ -25,6 +26,7 @@ class Rx5808Controller:
         self._clock = clock or time.time
         self._sleep = sleep or time.sleep
         self._rng = rng or random.Random()
+        self._osd_file = osd_file                # current channel written here for ffmpeg drawtext
         self._targets = []                       # [(name, freq)] — auto-mode detected carriers
         self._mode = "auto"                      # auto | scan | random | manual
         self._manual = None                      # (name, freq) for manual mode
@@ -87,12 +89,27 @@ class Rx5808Controller:
             name, freq = lst[self._idx]
             return name, freq, "auto", [f for _, f in self._targets]
 
+    def _write_osd(self, text):
+        if not self._osd_file:
+            return
+        try:
+            d = os.path.dirname(self._osd_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            tmp = self._osd_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, self._osd_file)      # atomic: drawtext never reads a partial line
+        except Exception:
+            LOG.exception("rx5808 OSD write failed")
+
     def tune(self, name, freq, mode, target_freqs, ts):
         try:
             set_frequency(self.backend, freq, self.settle_ms, sleep=self._sleep)
         except Exception:
             LOG.exception("rx5808 tune failed @ %s MHz", freq)
             return
+        self._write_osd(f"{name} · {int(round(freq))} · {mode}")
         try:
             if self.publisher is not None:
                 self.publisher.publish_rxtune(ts, freq, name, mode, target_freqs)

@@ -154,7 +154,7 @@ def main() -> None:
             backend = LgpioBackend(clk=cfg.rx5808_clk, data=cfg.rx5808_data, le=cfg.rx5808_le)
             controller = Rx5808Controller(
                 backend, publisher, cfg.scanner_id, RX5808_CHANNELS,
-                cfg.rx5808_dwell_s, cfg.rx5808_settle_ms,
+                cfg.rx5808_dwell_s, cfg.rx5808_settle_ms, osd_file=cfg.rx5808_osd_file,
             )
             controller.start()
             LOG.info("rx5808 controller started (dwell=%.1fs clk/data/le=%d/%d/%d)",

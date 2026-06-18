@@ -115,3 +115,26 @@ def test_set_command_manual_unknown_channel_keeps_previous():
     c.run_once()
     assert pub.tunes[0][1] == "A1"       # still A1
     assert pub.tunes[0][2] == "manual"
+
+
+def test_writes_osd_file_on_tune(tmp_path):
+    osd = tmp_path / "osd.txt"
+    pub = FakePub()
+    c = RC.Rx5808Controller(
+        FakeBackend(), pub, "hackrf", RX5808_CHANNELS, dwell_s=0, settle_ms=0,
+        clock=lambda: 1000, sleep=lambda s: None, osd_file=str(osd),
+    )
+    c.set_command("manual", "A1")
+    c.run_once()
+    assert osd.read_text(encoding="utf-8") == "A1 · 5865 · manual"
+
+
+def test_no_osd_file_when_path_empty(tmp_path):
+    pub = FakePub()
+    c = RC.Rx5808Controller(
+        FakeBackend(), pub, "hackrf", RX5808_CHANNELS, dwell_s=0, settle_ms=0,
+        clock=lambda: 1000, sleep=lambda s: None, osd_file="",
+    )
+    c.set_command("manual", "A1")
+    c.run_once()
+    assert not (tmp_path / "osd.txt").exists()

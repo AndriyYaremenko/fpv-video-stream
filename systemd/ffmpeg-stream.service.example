@@ -1,0 +1,24 @@
+# Reference unit for the RX5808 grabber push with a live channel OSD.
+# The real unit is hand-installed on the Pi at /etc/systemd/system/ffmpeg-stream.service;
+# this is the committed reference. Set the real RTSP password and verify /dev/video0.
+# Needs fonts-dejavu-core (apt) for the drawtext font.
+[Unit]
+Description=FFmpeg RTSP stream (pi-01) — RX5808 grabber + channel OSD
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# drawtext fails to start on a missing textfile — ensure it exists first.
+ExecStartPre=/bin/sh -c 'mkdir -p /run/fpv; [ -f /run/fpv/rx5808.txt ] || echo RX5808 > /run/fpv/rx5808.txt'
+ExecStart=/usr/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
+  -f v4l2 -framerate 25 -video_size 720x576 -i /dev/video0 \
+  -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:textfile=/run/fpv/rx5808.txt:reload=1:x=w-tw-10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=6" \
+  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 25 \
+  -b:v 2M -maxrate 2M -bufsize 2M \
+  -f rtsp -rtsp_transport tcp rtsp://pi-01:CHANGE_ME@10.8.0.1:8554/pi-01
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

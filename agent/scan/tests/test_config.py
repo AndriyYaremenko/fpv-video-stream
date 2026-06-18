@@ -87,3 +87,10 @@ def test_rx5808_carrier_thresholds_defaults_and_env():
     c2 = load_config({"RX5808_CARRIER_SNR_DB": "18", "RX5808_CARRIER_MIN_BW_MHZ": "1.0"})
     assert c2.rx5808_carrier_snr_db == 18.0
     assert c2.rx5808_carrier_min_bw_mhz == 1.0
+
+
+def test_rx5808_osd_file_default_and_env():
+    c = load_config({})
+    assert c.rx5808_osd_file == "/run/fpv/rx5808.txt"
+    c2 = load_config({"FPV_RX_OSD_FILE": "/tmp/osd.txt"})
+    assert c2.rx5808_osd_file == "/tmp/osd.txt"
