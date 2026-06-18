@@ -7,6 +7,11 @@ export function emptyStore() {
   return {};
 }
 
+// Build an RX5808 command payload for fpv/<id>/rxcmd.
+export function buildCommand(mode, channel) {
+  return { mode, channel: channel || null };
+}
+
 function ensure(store, id) {
   if (!store[id]) {
     store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, bands: {}, latestPsd: {}, waterfalls: {} };
@@ -81,5 +86,14 @@ export class MqttScanClient {
       if (!raf) raf = requestAnimationFrame(notify);
     });
     this.client = client;
+  }
+
+  // Publish an RX5808 command to fpv/<id>/rxcmd (retained) over the existing WSS connection.
+  publishCommand(id, cmd) {
+    if (!this.client || !id || !cmd || !cmd.mode) return;
+    this.client.publish(
+      `fpv/${id}/rxcmd`, JSON.stringify(buildCommand(cmd.mode, cmd.channel)),
+      { qos: 1, retain: true },
+    );
   }
 }

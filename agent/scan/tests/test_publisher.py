@@ -63,6 +63,10 @@ class FakeClient:
     def publish(self, topic, payload, qos=0, retain=False):
         self.published.append((topic, payload, qos, retain))
 
+    def subscribe(self, topic, *a, **k):
+        self.subscribed = getattr(self, "subscribed", [])
+        self.subscribed.append(topic)
+
 
 def _pub(fake):
     return publisher.MqttPublisher(
@@ -200,3 +204,40 @@ def test_publish_rxtune_topic_qos_retain():
 def test_publish_rxtune_is_noop_when_not_connected():
     p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
     p.publish_rxtune(1, 5865, "A1", "scan", [])        # must not raise
+
+
+class _Msg:
+    def __init__(self, payload):
+        self.payload = payload
+
+
+def test_connect_subscribes_to_command_topic():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p._on_connect(fake, None, None, 0)
+    assert "fpv/hackrf/rxcmd" in getattr(fake, "subscribed", [])
+
+
+def test_on_message_dispatches_command():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
+    got = []
+    p.on_command = lambda mode, channel: got.append((mode, channel))
+    p._on_message(None, None, _Msg(json.dumps({"mode": "manual", "channel": "A1"})))
+    assert got == [("manual", "A1")]
+
+
+def test_on_message_swallows_bad_payload():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
+    p.on_command = lambda mode, channel: (_ for _ in ()).throw(AssertionError("should not be called"))
+    p._on_message(None, None, _Msg(b"{not json"))      # must not raise / not dispatch
+
+
+def test_on_message_ignores_non_dict_payload():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")
+    p.on_command = lambda mode, channel: (_ for _ in ()).throw(AssertionError("should not be called"))
+    p._on_message(None, None, _Msg(json.dumps(123)))     # valid JSON, not a dict -> ignored
+
+
+def test_on_message_noop_when_no_handler():
+    p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")   # on_command stays None
+    p._on_message(None, None, _Msg(json.dumps({"mode": "scan"})))   # must not raise

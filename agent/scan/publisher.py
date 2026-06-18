@@ -50,6 +50,8 @@ class MqttPublisher:
         self._t_status = f"fpv/{scanner_id}/status"
         self._t_video = f"fpv/{scanner_id}/video"
         self._t_rxtune = f"fpv/{scanner_id}/rxtune"
+        self._t_rxcmd = f"fpv/{scanner_id}/rxcmd"
+        self.on_command = None          # set by the caller: fn(mode, channel)
         self._client = None
 
     def connect(self, ts):
@@ -61,6 +63,7 @@ class MqttPublisher:
             qos=self.QOS_STATUS, retain=True,
         )
         client.on_connect = self._on_connect
+        client.on_message = self._on_message
         client.connect(self.host, self.port, keepalive=self.keepalive)
         client.loop_start()
         self._client = client
@@ -75,8 +78,22 @@ class MqttPublisher:
                 self._t_status, json.dumps({"online": True, "ts": int(time.time())}),
                 qos=self.QOS_STATUS, retain=True,
             )
+            client.subscribe(self._t_rxcmd)   # dashboard commands (re-subscribed on reconnect)
         except Exception:
-            LOG.exception("status publish failed")
+            LOG.exception("status publish / command subscribe failed")
+
+    def _on_message(self, client, userdata, msg, *args):
+        # Inbound dashboard command on fpv/<id>/rxcmd. Fully guarded — never disturbs the loop.
+        try:
+            data = json.loads(msg.payload)
+        except Exception:
+            return
+        if not isinstance(data, dict) or self.on_command is None:
+            return
+        try:
+            self.on_command(data.get("mode"), data.get("channel"))
+        except Exception:
+            LOG.exception("on_command handler failed")
 
     def publish_spectrum(self, ts, band_id, low_mhz, high_mhz, psd):
         self._publish(

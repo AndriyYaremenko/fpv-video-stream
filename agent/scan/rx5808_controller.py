@@ -1,4 +1,5 @@
 import logging
+import random
 import threading
 import time
 
@@ -12,7 +13,7 @@ class Rx5808Controller:
     `update_targets` was given any; otherwise all configured channels. Never raises into callers."""
 
     def __init__(self, backend, publisher, scanner_id, channels, dwell_s,
-                 settle_ms=35, clock=None, sleep=None):
+                 settle_ms=35, clock=None, sleep=None, rng=None):
         self.backend = backend
         self.publisher = publisher
         self.scanner_id = scanner_id
@@ -23,7 +24,10 @@ class Rx5808Controller:
         # topic's `ts`). Injectable for deterministic tests. NOT the dwell timer (that is _sleep).
         self._clock = clock or time.time
         self._sleep = sleep or time.sleep
-        self._targets = []                       # [(name, freq)]
+        self._rng = rng or random.Random()
+        self._targets = []                       # [(name, freq)] — auto-mode detected carriers
+        self._mode = "auto"                      # auto | scan | random | manual
+        self._manual = None                      # (name, freq) for manual mode
         self._lock = threading.Lock()
         self._idx = -1
         self._stop = threading.Event()
@@ -40,16 +44,48 @@ class Rx5808Controller:
         with self._lock:
             self._targets = chans
 
+    def set_command(self, mode, channel=None):
+        """Apply a dashboard command. Unknown mode/channel is ignored (prior state kept)."""
+        if mode not in ("auto", "scan", "random", "manual"):
+            LOG.warning("rx5808 ignoring unknown mode %r", mode)
+            return
+        resolved = None
+        if mode == "manual":
+            resolved = next(((n, f) for n, f in self._channels if n == channel), None)
+            if resolved is None:
+                LOG.warning("rx5808 manual: unknown channel %r, keeping previous", channel)
+        with self._lock:
+            self._mode = mode
+            if resolved is not None:
+                self._manual = resolved
+        LOG.info("rx5808 command applied: mode=%s channel=%s", mode, channel)
+
     def _next(self):
         with self._lock:
+            mode = self._mode
+            if mode == "manual":
+                pick = self._manual or (self._channels[0] if self._channels else None)
+                if pick is None:
+                    return None, None, mode, []
+                return pick[0], pick[1], mode, []
+            if mode == "random":
+                if not self._channels:
+                    return None, None, mode, []
+                name, freq = self._rng.choice(self._channels)
+                return name, freq, mode, []
+            if mode == "scan":
+                if not self._channels:
+                    return None, None, mode, []
+                self._idx = (self._idx + 1) % len(self._channels)
+                name, freq = self._channels[self._idx]
+                return name, freq, mode, []
+            # auto: detected carriers if any, else all channels
             lst = self._targets or self._channels
-            mode = "detected" if self._targets else "scan"
             if not lst:
-                return None, None, mode, []
+                return None, None, "auto", []
             self._idx = (self._idx + 1) % len(lst)
             name, freq = lst[self._idx]
-            target_freqs = [f for _, f in self._targets]
-        return name, freq, mode, target_freqs
+            return name, freq, "auto", [f for _, f in self._targets]
 
     def tune(self, name, freq, mode, target_freqs, ts):
         try:

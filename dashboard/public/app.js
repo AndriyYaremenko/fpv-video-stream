@@ -3,6 +3,7 @@ import { startWhep } from '/whep.js';
 import { splitByKind, renderSpectrum } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
+import { nearestRxChannel } from '/rx5808-channels.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
@@ -15,6 +16,28 @@ const scanClient = new MqttScanClient();
 let scannersFromRegistry = [];
 
 spectrumPanel.addEventListener('click', (e) => {
+  const scanBlock = e.target.closest('[data-scanner-id]');
+  const sid = scanBlock ? scanBlock.dataset.scannerId : null;
+
+  // RX5808 mode buttons
+  const modeBtn = e.target.closest('[data-rxmode]');
+  if (modeBtn && sid) {
+    scanClient.publishCommand(sid, { mode: modeBtn.dataset.rxmode });
+    return;
+  }
+  // Click the 5.8 spectrum -> tune the nearest channel (manual)
+  const canvas = e.target.closest('canvas.tunable');
+  if (canvas && sid) {
+    const rect = canvas.getBoundingClientRect();
+    const lo = Number(canvas.dataset.lowMhz);
+    const hi = Number(canvas.dataset.highMhz);
+    const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
+    const freq = lo + (x / rect.width) * (hi - lo);
+    const ch = nearestRxChannel(freq);
+    if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
+    return;
+  }
+
   const frame = e.target.closest('.scan-frame');
   if (frame) {
     const cap = frame.parentElement.querySelector('.scan-frame-cap');
@@ -30,6 +53,14 @@ spectrumPanel.addEventListener('click', (e) => {
   if (act === 'edit') openEditForm(id);
   else if (act === 'del') deleteScanner(id);
   else if (act === 'info') scannerInfoModal(lastById.get(id) || { id, name: id, location: '' }, false);
+});
+
+// RX5808 channel <select> -> tune that channel (manual)
+spectrumPanel.addEventListener('change', (e) => {
+  const sel = e.target.closest('select.rx5808-ch');
+  if (!sel) return;
+  const block = sel.closest('[data-scanner-id]');
+  if (block) scanClient.publishCommand(block.dataset.scannerId, { mode: 'manual', channel: sel.value });
 });
 
 // ---- sound-alert toggle ----
