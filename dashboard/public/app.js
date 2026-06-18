@@ -356,9 +356,10 @@ function scannerInfoModal(device, isNew) {
   showModal(`
     <h2>${isNew ? '✅ Сканер створено' : '📡 Сканер'}: ${escapeHtml(device.id)}</h2>
     <p class="muted">${escapeHtml(device.name || '')}${device.location ? ` · ${escapeHtml(device.location)}` : ''}</p>
-    <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує.</p>
-    ${credRow('SCAN_ID на Pi', device.id)}
-    ${credRow('Ендпойнт телеметрії', `/api/telemetry/${device.id}`)}
+    <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує. Дані йдуть у MQTT-брокер.</p>
+    ${credRow('SCAN_ID на Pi (= id топіка)', device.id)}
+    ${credRow('MQTT-топіки', `fpv/${device.id}/{spectrum,detection,status}`)}
+    <p class="muted small">На Pi задай SCAN_MQTT_HOST + MQTT_PUB_USER/PASS (див. deploy-доку). SCAN_ID має дорівнювати id вище.</p>
     <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
 }
 
