@@ -15,6 +15,12 @@ const scanClient = new MqttScanClient();
 let scannersFromRegistry = [];
 
 spectrumPanel.addEventListener('click', (e) => {
+  const frame = e.target.closest('.scan-frame');
+  if (frame) {
+    const cap = frame.parentElement.querySelector('.scan-frame-cap');
+    openImageModal(frame.src, cap ? cap.textContent : '');
+    return;
+  }
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const block = btn.closest('[data-scanner-id]');
@@ -231,6 +237,8 @@ let modalPlayer = null;
 function openModal(d) {
   const modal = document.getElementById('modal');
   const video = document.getElementById('modal-video');
+  document.getElementById('modal-image').classList.add('hidden');
+  video.classList.remove('hidden');
   if (modalPlayer) { modalPlayer.close(); modalPlayer = null; }
   document.getElementById('modal-caption').textContent = `${d.name} — ${d.location}`;
   modal.classList.remove('hidden');
@@ -239,6 +247,26 @@ function openModal(d) {
       .then((p) => { modalPlayer = p; }).catch(() => {});
   }
   const close = () => { if (modalPlayer) { modalPlayer.close(); modalPlayer = null; } modal.classList.add('hidden'); };
+  document.getElementById('modal-close').onclick = close;
+}
+
+// Enlarge a recovered scan frame (a base64 PNG) in the shared modal — swaps the WHEP video for an img.
+function openImageModal(src, caption) {
+  const modal = document.getElementById('modal');
+  const video = document.getElementById('modal-video');
+  const img = document.getElementById('modal-image');
+  if (modalPlayer) { modalPlayer.close(); modalPlayer = null; }
+  video.classList.add('hidden');
+  img.src = src;
+  img.classList.remove('hidden');
+  document.getElementById('modal-caption').textContent = caption || '';
+  modal.classList.remove('hidden');
+  const close = () => {
+    img.classList.add('hidden');
+    img.src = '';
+    video.classList.remove('hidden');
+    modal.classList.add('hidden');
+  };
   document.getElementById('modal-close').onclick = close;
 }
 
@@ -364,7 +392,7 @@ function scannerInfoModal(device, isNew) {
     <p class="muted">${escapeHtml(device.name || '')}${device.location ? ` · ${escapeHtml(device.location)}` : ''}</p>
     <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує. Дані йдуть у MQTT-брокер.</p>
     ${credRow('SCAN_ID на Pi (= id топіка)', device.id)}
-    ${credRow('MQTT-топіки', `fpv/${device.id}/{spectrum,detection,status}`)}
+    ${credRow('MQTT-топіки', `fpv/${device.id}/{spectrum,detection,status,video}`)}
     <p class="muted small">На Pi задай SCAN_MQTT_HOST + MQTT_PUB_USER/PASS (див. deploy-доку). SCAN_ID має дорівнювати id вище.</p>
     <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
 }
