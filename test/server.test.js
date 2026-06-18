@@ -9,7 +9,6 @@ const registry = {
 const config = {
   dashUser: 'op', dashPass: 'pw', sessionSecret: 'test-secret',
   webrtcBase: 'http://10.8.0.1:8889', readUser: 'viewer', readPass: 'rpw',
-  telemetryToken: '',
   mqtt: { url: 'wss://rerfpv.ksm.in.ua/mqtt', user: 'sub', pass: 'subpw' },
   pushOpts: { wgIp: '10.8.0.1', rtspPort: 8554, srtPort: 8890, videoDevice: '/dev/video0', framerate: 30, videoSize: '720x576', bitrate: '2M' },
   persistRegistry: () => {},

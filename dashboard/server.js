@@ -174,14 +174,12 @@ export async function start() {
     webrtcBase: `http://${env.WG_IP || '10.8.0.1'}:${env.WEBRTC_PORT || 8889}`,
     readUser: registry.read_user,
     readPass: registry.read_pass,
-    telemetryToken: env.TELEMETRY_TOKEN || '',
     mqtt: {
       url: env.MQTT_WSS_URL || '',
       user: env.MQTT_SUB_USER || 'sub',
       pass: env.MQTT_SUB_PASS || '',
     },
     pollIntervalMs: Number(env.POLL_INTERVAL_MS || 2000),
-    scannerFreshMs: Number(env.SCANNER_FRESH_MS || 60000),
     pushOpts: {
       wgIp: renderOpts.wgIp,
       rtspPort: renderOpts.rtspPort,
