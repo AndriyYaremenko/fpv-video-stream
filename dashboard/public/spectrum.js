@@ -41,6 +41,14 @@ export function frameCaption(v) {
   return parts.join(' · ');
 }
 
+// Caption for the current RX5808 tune: "RX5808 → 5865 МГц (A1) · scan".
+export function rxtuneCaption(rx) {
+  if (!rx || rx.freq_mhz == null) return '';
+  const ch = rx.channel ? ` (${rx.channel})` : '';
+  const mode = rx.mode ? ` · ${rx.mode}` : '';
+  return `RX5808 → ${fmtFreq(rx.freq_mhz)}${ch}${mode}`;
+}
+
 // Map a PSD array (dBm) to polyline points in a w×h box. Higher power = higher on screen (smaller y).
 export function psdToPoints(psd, width, height, dbMin = -100, dbMax = -20) {
   const n = psd.length;
@@ -129,14 +137,20 @@ function scannerBlock(s, live, highlightKeys) {
     block.appendChild(fw);
   }
 
+  // current RX5808 tuned frequency (auto-hopping receiver feeding the grabber stream)
+  if (live && live.rxtune && live.rxtune.freq_mhz != null) {
+    block.appendChild(el('div', 'scan-rxtune', escapeHtml(rxtuneCaption(live.rxtune))));
+  }
+
   // 3 bands in a row: each = live PSD line + scrolling waterfall
   const charts = el('div', 'scan-charts');
+  const rxFreq = (live && live.rxtune) ? live.rxtune.freq_mhz : null;
   for (const band of bandIds) {
     const range = live.bands[band] || {};
     const psd = (live.latestPsd && live.latestPsd[band]) || [];
     const frames = (live.waterfalls && live.waterfalls[band]) || [];
     const dets = (det.detections || []).filter((d) => d.band === band);
-    charts.appendChild(bandCell(band, range, psd, frames, dets));
+    charts.appendChild(bandCell(band, range, psd, frames, dets, rxFreq));
   }
   block.appendChild(charts);
 
@@ -144,7 +158,7 @@ function scannerBlock(s, live, highlightKeys) {
   return block;
 }
 
-function bandCell(band, range, psd, frames, dets) {
+function bandCell(band, range, psd, frames, dets, rxFreq) {
   const wrap = el('div', 'band-cell');
   wrap.appendChild(el('div', 'band-label', escapeHtml(band)));
   const w = 240;
@@ -163,6 +177,12 @@ function bandCell(band, range, psd, frames, dets) {
   for (const d of dets) {
     const x = detectionX(d.center_mhz, range.low_mhz, range.high_mhz, w);
     lc.strokeStyle = classColor(d.class); lc.lineWidth = 2;
+    lc.beginPath(); lc.moveTo(x, 0); lc.lineTo(x, lh); lc.stroke();
+  }
+  // RX5808 tuned-frequency marker (only on the band that contains it, e.g. 5.8G)
+  if (rxFreq != null && range.low_mhz != null && rxFreq >= range.low_mhz && rxFreq <= range.high_mhz) {
+    const x = detectionX(rxFreq, range.low_mhz, range.high_mhz, w);
+    lc.strokeStyle = '#39d0ff'; lc.lineWidth = 2;
     lc.beginPath(); lc.moveTo(x, 0); lc.lineTo(x, lh); lc.stroke();
   }
   wrap.appendChild(line);
