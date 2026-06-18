@@ -20,13 +20,8 @@ export function createApp({ registry, getPaths, config }) {
     httpOnly: true, sameSite: 'lax', maxAge: 12 * 60 * 60 * 1000,
   }));
 
-  // In-memory state: last telemetry payload + last byte sample per device (for bitrate).
-  const telemetry = new Map();
+  // In-memory state: last byte sample per device (for bitrate).
   const samples = new Map();
-  // A scanner is "online" if it posted telemetry within this window. Generous by default:
-  // a multi-band scan cycle (and the HackRF recovery/backoff on flaky USB) can pause posting
-  // for tens of seconds, which would otherwise flap the tile offline. Override via SCANNER_FRESH_MS.
-  const SCANNER_FRESH_MS = config.scannerFreshMs || 60000;
 
   const requireAuth = (req, res, next) => {
     if (req.session?.authed) return next();
@@ -48,19 +43,6 @@ export function createApp({ registry, getPaths, config }) {
   });
   app.post('/logout', (req, res) => { req.session = null; res.json({ ok: true }); });
 
-  // ---- telemetry hook (called by Pi over WG; optional bearer token) ----
-  app.post('/api/telemetry/:id', (req, res) => {
-    if (config.telemetryToken && req.get('authorization') !== `Bearer ${config.telemetryToken}`) {
-      return res.status(401).json({ error: 'bad token' });
-    }
-    // Only accept telemetry for known devices — bounds the Map and rejects typos/spam.
-    if (!(registry.devices || []).some((d) => d.id === req.params.id)) {
-      return res.status(404).json({ error: 'unknown device' });
-    }
-    telemetry.set(req.params.id, { ...req.body, _ts: Date.now() });
-    res.json({ ok: true });
-  });
-
   // ---- status snapshot ----
   async function snapshot() {
     const paths = await getPaths();
@@ -70,12 +52,6 @@ export function createApp({ registry, getPaths, config }) {
       const prev = samples.get(d.id);
       d.bitrateKbps = d.online ? computeBitrateKbps(prev?.bytes, prev?.ts, d.bytesReceived, now) : null;
       if (d.online) samples.set(d.id, { bytes: d.bytesReceived, ts: now });
-      const tel = telemetry.get(d.id) || null;
-      d.telemetry = tel;
-      if (d.kind === 'scanner') {
-        d.online = !!tel && (now - tel._ts) < SCANNER_FRESH_MS;
-        d.bitrateKbps = null;
-      }
     }
     return merged;
   }
@@ -111,7 +87,7 @@ export function createApp({ registry, getPaths, config }) {
       const device = addDevice(registry, { id: finalId, name, location, kind });
       config.persistRegistry(registry);
       if (device.kind === 'scanner') {
-        return res.status(201).json({ device, scanner: { telemetryPath: `/api/telemetry/${device.id}` } });
+        return res.status(201).json({ device, scanner: { topicPrefix: `fpv/${device.id}` } });
       }
       res.status(201).json({ device, push: pushFor(device) });
     } catch (e) {
@@ -142,7 +118,6 @@ export function createApp({ registry, getPaths, config }) {
   app.delete('/api/devices/:id', requireAuth, (req, res) => {
     try {
       removeDevice(registry, req.params.id);
-      telemetry.delete(req.params.id);
       samples.delete(req.params.id);
       config.persistRegistry(registry);
       res.json({ ok: true });
