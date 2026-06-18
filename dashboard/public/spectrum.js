@@ -1,4 +1,5 @@
 import { detectionKey } from './alert.js';
+import { RX5808_CHANNELS } from './rx5808-channels.js';
 // dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + DOM render (browser only).
 
 
@@ -141,6 +142,7 @@ function scannerBlock(s, live, highlightKeys) {
   if (live && live.rxtune && live.rxtune.freq_mhz != null) {
     block.appendChild(el('div', 'scan-rxtune', escapeHtml(rxtuneCaption(live.rxtune))));
   }
+  block.appendChild(rx5808Controls(live && live.rxtune ? live.rxtune.mode : null));
 
   // 3 bands in a row: each = live PSD line + scrolling waterfall
   const charts = el('div', 'scan-charts');
@@ -150,7 +152,7 @@ function scannerBlock(s, live, highlightKeys) {
     const psd = (live.latestPsd && live.latestPsd[band]) || [];
     const frames = (live.waterfalls && live.waterfalls[band]) || [];
     const dets = (det.detections || []).filter((d) => d.band === band);
-    charts.appendChild(bandCell(band, range, psd, frames, dets, rxFreq));
+    charts.appendChild(bandCell(band, range, psd, frames, dets, rxFreq, band === '5.8G'));
   }
   block.appendChild(charts);
 
@@ -158,7 +160,25 @@ function scannerBlock(s, live, highlightKeys) {
   return block;
 }
 
-function bandCell(band, range, psd, frames, dets, rxFreq) {
+// RX5808 control row: mode buttons + channel <select>. activeMode highlights the live mode.
+function rx5808Controls(activeMode) {
+  const row = el('div', 'rx5808-ctl');
+  for (const m of ['auto', 'scan', 'random', 'manual']) {
+    const b = el('button', `rx-mode${m === activeMode ? ' active' : ''}`, m);
+    b.dataset.rxmode = m;
+    row.appendChild(b);
+  }
+  const sel = el('select', 'rx5808-ch');
+  for (const ch of RX5808_CHANNELS) {
+    const o = document.createElement('option');
+    o.value = ch.name; o.textContent = `${ch.name} · ${ch.freq}`;
+    sel.appendChild(o);
+  }
+  row.appendChild(sel);
+  return row;
+}
+
+function bandCell(band, range, psd, frames, dets, rxFreq, tunable) {
   const wrap = el('div', 'band-cell');
   wrap.appendChild(el('div', 'band-label', escapeHtml(band)));
   const w = 240;
@@ -167,6 +187,11 @@ function bandCell(band, range, psd, frames, dets, rxFreq) {
   const lh = 44;
   const line = document.createElement('canvas');
   line.width = w; line.height = lh; line.className = 'chart-line';
+  if (tunable && range.low_mhz != null) {
+    line.classList.add('tunable');                 // click maps x -> freq -> nearest RX5808 channel
+    line.dataset.lowMhz = range.low_mhz;
+    line.dataset.highMhz = range.high_mhz;
+  }
   const lc = line.getContext('2d');
   const pts = psdToPoints(psd, w, lh);
   if (pts.length) {

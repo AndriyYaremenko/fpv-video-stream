@@ -110,3 +110,10 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .modal video.hidden { display:none; }
 
 .scan-rxtune { color:#39d0ff; font-size:.82rem; margin:.35rem 0; font-weight:600; }
+
+/* RX5808 control row */
+.rx5808-ctl { display:flex; gap:.3rem; align-items:center; margin:.35rem 0; flex-wrap:wrap; }
+.rx5808-ctl .rx-mode { font-size:.75rem; padding:.15rem .5rem; background:#0c1118; color:#9aa4b2; border:1px solid var(--line); border-radius:4px; cursor:pointer; }
+.rx5808-ctl .rx-mode.active { color:#39d0ff; border-color:#39d0ff; }
+.rx5808-ctl .rx5808-ch { font-size:.75rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; }
+.band-cell .chart-line.tunable { cursor:crosshair; }
