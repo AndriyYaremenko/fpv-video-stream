@@ -65,3 +65,13 @@ test('reduce video defaults frame to empty string when missing', () => {
   const s = reduce(emptyStore(), 'fpv/hackrf/video', JSON.stringify({ ts: 1, standard: 'NTSC' }));
   assert.equal(s.hackrf.video.frame_png_b64, '');
 });
+
+test('reduce stores the rxtune state', () => {
+  const s = reduce(emptyStore(), 'fpv/hackrf/rxtune', JSON.stringify({
+    ts: 5, freq_mhz: 5865, channel: 'A1', mode: 'detected', targets: [5865, 5800],
+  }));
+  assert.equal(s.hackrf.rxtune.freq_mhz, 5865);
+  assert.equal(s.hackrf.rxtune.channel, 'A1');
+  assert.equal(s.hackrf.rxtune.mode, 'detected');
+  assert.deepEqual(s.hackrf.rxtune.targets, [5865, 5800]);
+});
