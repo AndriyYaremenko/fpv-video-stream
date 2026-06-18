@@ -49,6 +49,7 @@ class Config:
     rx5808_settle_ms: int = 35
     rx5808_carrier_snr_db: float = 15.0
     rx5808_carrier_min_bw_mhz: float = 0.5
+    rx5808_osd_file: str = "/run/fpv/rx5808.txt"
     thresholds: Thresholds = field(default_factory=Thresholds)
 
 
@@ -93,4 +94,6 @@ def load_config(env: Optional[dict] = None) -> Config:
         c.rx5808_carrier_snr_db = float(env["RX5808_CARRIER_SNR_DB"])
     if "RX5808_CARRIER_MIN_BW_MHZ" in env:
         c.rx5808_carrier_min_bw_mhz = float(env["RX5808_CARRIER_MIN_BW_MHZ"])
+    if "FPV_RX_OSD_FILE" in env:
+        c.rx5808_osd_file = env["FPV_RX_OSD_FILE"]
     return c
