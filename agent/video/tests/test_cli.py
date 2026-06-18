@@ -79,11 +79,12 @@ def test_std_auto_distinguishes_ntsc(monkeypatch, tmp_path):
 
 def test_empty_reconstruction_errors_without_crashing(monkeypatch, tmp_path):
     # Sync gate passes but reconstruction yields no lines -> clean exit 1, no publish/crash.
+    from pipeline import VideoFrame
     fs = 8_000_000.0
     iq_path = _write_iq(tmp_path, "PAL", fs)
     published = {"called": False}
-    monkeypatch.setattr(iq_video, "reconstruct_frames",
-                        lambda *a, **k: [np.zeros((0, 720))])
+    monkeypatch.setattr(iq_video, "extract_frame",
+                        lambda *a, **k: VideoFrame("PAL", 15625, 20.0, None))
     monkeypatch.setattr(iq_video, "publish_video_once",
                         lambda *a, **k: published.__setitem__("called", True) or True)
     monkeypatch.setenv("FPV_FRAMES_DIR", str(tmp_path / "frames"))
