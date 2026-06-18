@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyStore, reduce } from '../dashboard/public/mqtt-scan.js';
+import { emptyStore, reduce, buildCommand } from '../dashboard/public/mqtt-scan.js';
 
 test('reduce ignores unknown/malformed topics', () => {
   assert.deepEqual(reduce(emptyStore(), 'fpv/x/other', '{}'), {});
@@ -74,4 +74,9 @@ test('reduce stores the rxtune state', () => {
   assert.equal(s.hackrf.rxtune.channel, 'A1');
   assert.equal(s.hackrf.rxtune.mode, 'detected');
   assert.deepEqual(s.hackrf.rxtune.targets, [5865, 5800]);
+});
+
+test('buildCommand shapes mode + channel', () => {
+  assert.deepEqual(buildCommand('manual', 'A1'), { mode: 'manual', channel: 'A1' });
+  assert.deepEqual(buildCommand('scan'), { mode: 'scan', channel: null });
 });
