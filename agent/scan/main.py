@@ -163,6 +163,10 @@ def main() -> None:
                      cfg.rx5808_dwell_s, cfg.rx5808_clk, cfg.rx5808_data, cfg.rx5808_le)
     except Exception:
         LOG.exception("rx5808 controller init failed; continuing without it")
+    if controller is not None and publisher is not None:
+        # Apply dashboard commands (fpv/<id>/rxcmd) to the controller. Set synchronously here,
+        # before the retained command's async delivery arrives via the paho loop thread.
+        publisher.on_command = controller.set_command
     backoff = 1.0
     while True:
         try:
