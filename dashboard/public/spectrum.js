@@ -61,11 +61,104 @@ export function psdColor(db, dbMin = -100, dbMax = -20) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-// ---- DOM rendering (browser only; not unit-tested, validated with `node --check` + manual) ----
+// ---- DOM rendering (browser only; validated with `node --check` + manual) ----
 
-export function renderSpectrum(container, scanners, highlightKeys = new Set()) {
+// renderSpectrum(container, scanners, store): scanners = registry devices (kind=scanner, for
+// name/location/management); store = MqttScanClient store keyed by scanner id (live data).
+export function renderSpectrum(container, scanners, store = {}, highlightKeys = new Set()) {
   container.innerHTML = '';
-  for (const s of scanners) container.appendChild(scannerBlock(s, highlightKeys));
+  for (const s of scanners) container.appendChild(scannerBlock(s, store[s.id], highlightKeys));
+}
+
+function scannerBlock(s, live, highlightKeys) {
+  const block = el('div', 'scan-block');
+  block.dataset.scannerId = s.id;
+  const online = !!(live && live.online);
+
+  block.appendChild(el('div', 'scan-head', `
+    <strong>${escapeHtml(s.name)}</strong> <small>${escapeHtml(s.location || '')}</small>
+    <span class="badge ${online ? 'on' : 'off'}">${online ? 'ONLINE' : 'OFFLINE'}</span>
+    <span class="scan-actions">
+      <button class="tile-btn" data-act="info" title="Інфо">🔑</button>
+      <button class="tile-btn" data-act="edit" title="Редагувати">✏️</button>
+      <button class="tile-btn" data-act="del" title="Видалити">🗑</button>
+    </span>`));
+
+  const bandIds = live ? Object.keys(live.bands) : [];
+  if (!online && !bandIds.length) {
+    block.appendChild(el('p', 'scan-empty', 'немає даних'));
+    return block;
+  }
+
+  const det = (live && live.detection) || { detections: [], occupancy: {} };
+
+  // occupancy strip (data-driven over the bands we have)
+  const occ = el('div', 'scan-occ');
+  for (const band of bandIds) {
+    const frac = (det.occupancy && det.occupancy[band]) || 0;
+    occ.appendChild(el('div', 'occ-bar', `
+      <span class="occ-label">${escapeHtml(band)}</span>
+      <span class="occ-track"><span class="occ-fill" style="width:${Math.round(frac * 100)}%"></span></span>
+      <span class="occ-val">${fmtPct(frac)}</span>`));
+  }
+  block.appendChild(occ);
+
+  // 3 bands in a row: each = live PSD line + scrolling waterfall
+  const charts = el('div', 'scan-charts');
+  for (const band of bandIds) {
+    const range = live.bands[band] || {};
+    const psd = (live.latestPsd && live.latestPsd[band]) || [];
+    const frames = (live.waterfalls && live.waterfalls[band]) || [];
+    const dets = (det.detections || []).filter((d) => d.band === band);
+    charts.appendChild(bandCell(band, range, psd, frames, dets));
+  }
+  block.appendChild(charts);
+
+  block.appendChild(detectionTable(det.detections || [], highlightKeys));
+  return block;
+}
+
+function bandCell(band, range, psd, frames, dets) {
+  const wrap = el('div', 'band-cell');
+  wrap.appendChild(el('div', 'band-label', escapeHtml(band)));
+  const w = 240;
+
+  // live PSD line + detection marks
+  const lh = 44;
+  const line = document.createElement('canvas');
+  line.width = w; line.height = lh; line.className = 'chart-line';
+  const lc = line.getContext('2d');
+  const pts = psdToPoints(psd, w, lh);
+  if (pts.length) {
+    lc.strokeStyle = '#6ca0ff'; lc.lineWidth = 1; lc.beginPath();
+    pts.forEach((p, i) => (i ? lc.lineTo(p.x, p.y) : lc.moveTo(p.x, p.y)));
+    lc.stroke();
+  }
+  for (const d of dets) {
+    const x = detectionX(d.center_mhz, range.low_mhz, range.high_mhz, w);
+    lc.strokeStyle = classColor(d.class); lc.lineWidth = 2;
+    lc.beginPath(); lc.moveTo(x, 0); lc.lineTo(x, lh); lc.stroke();
+  }
+  wrap.appendChild(line);
+
+  // waterfall: one pixel row per frame, newest on top
+  const rows = frames.length;
+  const wf = document.createElement('canvas');
+  wf.width = w; wf.height = Math.max(1, rows); wf.className = 'chart-wf';
+  const wc = wf.getContext('2d');
+  for (let r = 0; r < rows; r += 1) {
+    const f = frames[rows - 1 - r];           // newest first
+    const p = f.psd || [];
+    const n = p.length;
+    if (!n) continue;
+    for (let x = 0; x < w; x += 1) {
+      const idx = n === 1 ? 0 : Math.round((x / (w - 1)) * (n - 1));
+      wc.fillStyle = psdColor(p[idx]);
+      wc.fillRect(x, r, 1, 1);
+    }
+  }
+  wrap.appendChild(wf);
+  return wrap;
 }
 
 function el(tag, cls, html) {
@@ -73,79 +166,6 @@ function el(tag, cls, html) {
   if (cls) e.className = cls;
   if (html != null) e.innerHTML = html;
   return e;
-}
-
-function scannerBlock(s, highlightKeys) {
-  const tel = s.telemetry || {};
-  const block = el('div', 'scan-block');
-  block.dataset.scannerId = s.id;
-
-  const head = el('div', 'scan-head', `
-    <strong>${escapeHtml(s.name)}</strong> <small>${escapeHtml(s.location || '')}</small>
-    <span class="badge ${s.online ? 'on' : 'off'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
-    <span class="scan-actions">
-      <button class="tile-btn" data-act="info" title="Інфо телеметрії">🔑</button>
-      <button class="tile-btn" data-act="edit" title="Редагувати">✏️</button>
-      <button class="tile-btn" data-act="del" title="Видалити">🗑</button>
-    </span>`);
-  block.appendChild(head);
-
-  if (!s.online || !tel.detections) {
-    block.appendChild(el('p', 'scan-empty', 'немає даних'));
-    return block;
-  }
-
-  const occ = el('div', 'scan-occ');
-  for (const band of Object.keys(BAND_RANGES)) {
-    const frac = (tel.occupancy && tel.occupancy[band]) || 0;
-    occ.appendChild(el('div', 'occ-bar', `
-      <span class="occ-label">${band}</span>
-      <span class="occ-track"><span class="occ-fill" style="width:${Math.round(frac * 100)}%"></span></span>
-      <span class="occ-val">${fmtPct(frac)}</span>`));
-  }
-  block.appendChild(occ);
-
-  const charts = el('div', 'scan-charts');
-  for (const band of Object.keys(BAND_RANGES)) {
-    const psd = (tel.spectrum && tel.spectrum[band]) || [];
-    const dets = (tel.detections || []).filter((d) => d.band === band);
-    charts.appendChild(bandChart(band, psd, dets));
-  }
-  block.appendChild(charts);
-
-  block.appendChild(detectionTable(tel.detections || [], highlightKeys));
-  return block;
-}
-
-function bandChart(band, psd, dets) {
-  const wrap = el('div', 'band-chart');
-  wrap.appendChild(el('div', 'band-label', band));
-  const w = 240;
-  const h = 60;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  canvas.className = 'chart-canvas';
-  const ctx = canvas.getContext('2d');
-  const pts = psdToPoints(psd, w, h);
-  if (pts.length) {
-    ctx.strokeStyle = '#6ca0ff';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-    ctx.stroke();
-  }
-  for (const d of dets) {
-    const x = detectionX(d.center_mhz, band, w);
-    ctx.strokeStyle = classColor(d.class);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-    ctx.stroke();
-  }
-  wrap.appendChild(canvas);
-  return wrap;
 }
 
 function detectionTable(dets, highlightKeys = new Set()) {
