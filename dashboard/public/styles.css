@@ -81,7 +81,13 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .occ-track { width:90px; height:8px; background:#0b0e13; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
 .occ-fill { display:block; height:100%; background:var(--accent); }
 .occ-val { width:2.4rem; text-align:right; }
-.scan-charts { display:flex; gap:.8rem; flex-wrap:wrap; margin:.4rem 0; }
+/* spectrum: 3 bands in a row, each = line + waterfall */
+.scan-charts { display: flex; gap: 8px; margin-top: 8px; }
+.scan-charts .band-cell { flex: 1; min-width: 0; }
+.band-cell .band-label { font-size: 11px; color: #9aa0a6; margin-bottom: 3px; }
+.band-cell .chart-line { width: 100%; height: 44px; background: #0c1118; border-radius: 4px 4px 0 0; display: block; }
+.band-cell .chart-wf { width: 100%; height: 90px; image-rendering: pixelated; border-radius: 0 0 4px 4px; display: block; }
+/* legacy classes (no longer emitted) — kept for safety */
 .band-chart { display:flex; flex-direction:column; gap:.2rem; }
 .band-label { font-size:.7rem; color:#9aa4b2; }
 .chart-canvas { background:#0b0e13; border:1px solid var(--line); border-radius:6px; }

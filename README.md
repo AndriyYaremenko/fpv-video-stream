@@ -112,23 +112,12 @@ with `DASH_USER` / `DASH_PASS` from `.env`.
 WireGuard handshake (wg-easy) is the only public-facing port. Optional `ufw` rules are printed at
 the end of `install.sh` — allow the above only on `wg0`.
 
-## Telemetry hook (optional, stubbed)
-
-Pi (or any WG client) can POST JSON to `http://10.8.0.1:8080/api/telemetry/<device-id>`:
-
-```bash
-curl -X POST http://10.8.0.1:8080/api/telemetry/pi-01 \
-  -H 'Content-Type: application/json' -d '{"rssi":-58,"freq":"5.8G","alarm":false}'
-```
-
-The latest payload shows on the device tile. Set `TELEMETRY_TOKEN` in `.env` to require
-`Authorization: Bearer <token>`. No live source is wired yet — this is a ready hook.
-
 ## Scan service (HackRF)
 
 A Pi-side daemon (`agent/scan/`) sweeps 1.2/2.4/5.8 GHz with a HackRF One, detects active video
-carriers, classifies analog vs digital, and POSTs detections to the dashboard telemetry hook
-(`/api/telemetry/<scanner-id>`) plus a local state file (`/run/fpv-scan/scan.json`) and a read-only local JSON endpoint at `http://127.0.0.1:8077/` (configurable via `SCAN_HTTP_PORT`) for on-Pi consumers. Analog
+carriers, classifies analog vs digital, and publishes over MQTT (`fpv/<id>/{spectrum,detection,status}`)
+plus a local state file (`/run/fpv-scan/scan.json`) and a read-only local JSON endpoint at
+`http://127.0.0.1:8077/` (configurable via `SCAN_HTTP_PORT`) for on-Pi consumers. Analog
 detections are receivable on rx5808 (later sub-project); digital ones are flagged only.
 
 ### Install on the Pi
@@ -143,18 +132,17 @@ sudo systemctl enable --now fpv-scan
 journalctl -u fpv-scan -f
 ```
 
-> **Register the scanner id.** The dashboard telemetry hook only accepts known device ids, so add
-> the scanner (`scan-01`) as a device first — via the dashboard **➕ Додати вузол**, or
-> `sudo ./add-device.sh scan-01 "Spectrum scanner" "<site>"`. Otherwise POSTs return 404 and
-> detections never reach the dashboard (the local state file and JSON endpoint still work).
+> **Register the scanner id.** Add the scanner as a device first — via the dashboard **➕ Додати вузол**, or
+> `sudo ./add-device.sh scan-01 "Spectrum scanner" "<site>"`. The Pi `SCAN_ID` must equal the
+> registry scanner id so the dashboard can join live MQTT data to the correct scanner entry.
 
 ### Develop without a HackRF (replay mode)
 Synthetic fixtures for all three bands are committed under `tests/fixtures/`, so replay mode runs
-out of the box. POST failures to an unreachable dashboard are non-fatal (the local state file is
-still written); point `SCAN_SERVER_URL` at a dummy to keep the logs quiet:
+out of the box. MQTT publish failures to an unreachable broker are non-fatal (the local state file
+is still written). To silence broker-connection errors point `MQTT_BROKER` at a dummy:
 ```bash
 SCAN_SOURCE=replay SCAN_FIXTURES_DIR=./tests/fixtures \
-  SCAN_SERVER_URL=http://127.0.0.1:1 SCAN_STATE_PATH=./scan.json python main.py
+  MQTT_BROKER=mqtt://127.0.0.1:1 SCAN_STATE_PATH=./scan.json python main.py
 ```
 Regenerate the synthetic fixtures any time with `python tests/fixtures/generate_fixtures.py`.
 
@@ -176,15 +164,22 @@ hackrf_transfer -r tests/fixtures/iq_2.4G.bin -f 2440000000 -s 20000000 -n 20000
 ### Show a scanner on the dashboard
 
 Register the scanner as a **scanner-kind** device so the dashboard renders a "Spectrum" panel
-(occupancy bars, per-band spectrum charts, detection table) instead of a video tile:
+(occupancy bars, per-band live PSD line + scrolling waterfall for each of the 3 bands, detection
+table) instead of a video tile:
 
 - In the dashboard, **➕ Додати вузол** → set **Тип: Сканер (HackRF)** and an id (e.g. `scan-01`).
-- Use that id as `SCAN_ID` for the Pi `fpv-scan` service. The scanner posts to
-  `/api/telemetry/<id>`; the dashboard marks it online while telemetry stays fresh (~15 s).
+- Set `SCAN_ID=scan-01` on the Pi — it **must equal** the registry scanner id.
+- The dashboard fetches MQTT subscribe credentials from `GET /api/mqtt` (login-gated) and
+  subscribes over MQTT-WSS (`wss://rerfpv.ksm.in.ua/mqtt`) to
+  `fpv/<id>/{spectrum,detection,status}`, joining live data to the registered scanner by id.
+- The scanner is marked online/offline from the `fpv/<id>/status` retained/LWT message.
+
+> **WireGuard-only caveat:** the public WSS endpoint (`wss://rerfpv.ksm.in.ua/mqtt`) is unreachable
+> over WG without internet access. When on WG only, use the public HTTPS dashboard
+> (`https://rerfpv.ksm.in.ua`) for the Spectrum panel — it can reach the public MQTT broker.
 
 Scanner devices are excluded from `mediamtx.yml` (they never publish video). To preview the panel
-locally without a HackRF, run the scan service in replay mode (see above) pointing `SCAN_SERVER_URL`
-at the dashboard.
+locally without a HackRF, run the scan service in replay mode (see above).
 
 The dashboard's top bar has a **🔔 sound toggle**: when enabled, a newly detected transmitter
 (any class) plays a short beep and its row in the Spectrum panel is highlighted with ⚠. The beep
@@ -249,5 +244,9 @@ docker compose up -d --no-deps mosquitto
 # expose the WS as WSS via traefik (one-time): copy the sample, adjust the wg-easy bridge IP if needed
 sudo cp deploy/traefik/rerfpv-mqtt.yml.example /root/custom/rerfpv-mqtt.yml   # traefik hot-reloads
 ```
-The dashboard serves the browser's subscribe creds at `GET /api/mqtt` (login-gated). The Pi uses
-`MQTT_PUB_USER`/`MQTT_PUB_PASS` (configured Pi-side in SP-B).
+The dashboard serves the browser's subscribe creds at `GET /api/mqtt` (login-gated). On page load,
+the browser fetches those creds and connects to `wss://rerfpv.ksm.in.ua/mqtt`, subscribing to
+`fpv/<id>/{spectrum,detection,status}` for each registered scanner. The Spectrum panel renders a
+per-band live PSD line + scrolling waterfall (3 bands in a row) from `spectrum` frames; `detection`
+frames update the occupancy bars and detection table; `status` drives the online/offline badge.
+The Pi uses `MQTT_PUB_USER`/`MQTT_PUB_PASS` (configured Pi-side in SP-B).
