@@ -42,3 +42,27 @@ export function reduce(store, topic, payload, opts = {}) {
   }
   return store;
 }
+
+// ---- browser-only WSS client (not unit-tested; validated with node --check + manual) ----
+// Loads the vendored `mqtt` global (window.mqtt from vendor/mqtt.min.js). Reduces each message
+// into the store and notifies on an animation frame. Reconnect handled by mqtt.js.
+export class MqttScanClient {
+  constructor(depth = DEFAULT_DEPTH) {
+    this.store = emptyStore();
+    this.depth = depth;
+    this.client = null;
+  }
+
+  connect({ url, user, pass }, onChange) {
+    if (!url || typeof window === 'undefined' || !window.mqtt) return;
+    const client = window.mqtt.connect(url, { username: user, password: pass, reconnectPeriod: 4000 });
+    let raf = 0;
+    const notify = () => { raf = 0; onChange(this.store); };
+    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status']));
+    client.on('message', (topic, buf) => {
+      try { reduce(this.store, topic, buf.toString(), { depth: this.depth }); } catch { return; }
+      if (!raf) raf = requestAnimationFrame(notify);
+    });
+    this.client = client;
+  }
+}
