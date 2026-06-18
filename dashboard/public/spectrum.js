@@ -26,6 +26,21 @@ export function fmtPct(fraction) {
   return `${Math.round((Number(fraction) || 0) * 100)}%`;
 }
 
+// Caption for a recovered video frame: "PAL · 5800 МГц · SNR 18.3 dB · 12:03:20".
+export function frameCaption(v) {
+  if (!v) return '';
+  const parts = [];
+  if (v.standard) parts.push(String(v.standard));
+  if (v.center_mhz != null) parts.push(fmtFreq(v.center_mhz));
+  if (v.sync_snr_db != null) parts.push(`SNR ${Number(v.sync_snr_db).toFixed(1)} dB`);
+  if (v.ts) {
+    const d = new Date(Number(v.ts) * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    parts.push(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
+  }
+  return parts.join(' · ');
+}
+
 // Map a PSD array (dBm) to polyline points in a w×h box. Higher power = higher on screen (smaller y).
 export function psdToPoints(psd, width, height, dbMin = -100, dbMax = -20) {
   const n = psd.length;
@@ -102,6 +117,17 @@ function scannerBlock(s, live, highlightKeys) {
       <span class="occ-val">${fmtPct(frac)}</span>`));
   }
   block.appendChild(occ);
+
+  // recovered analog-video frame (latest): thumbnail + caption, click to enlarge
+  if (live && live.video && live.video.frame_png_b64) {
+    const fw = el('div', 'scan-frame-wrap');
+    const img = el('img', 'scan-frame');
+    img.alt = 'recovered frame';
+    img.src = `data:image/png;base64,${live.video.frame_png_b64}`;
+    fw.appendChild(img);
+    fw.appendChild(el('div', 'scan-frame-cap', escapeHtml(frameCaption(live.video))));
+    block.appendChild(fw);
+  }
 
   // 3 bands in a row: each = live PSD line + scrolling waterfall
   const charts = el('div', 'scan-charts');

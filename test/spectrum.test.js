@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor } from '../dashboard/public/spectrum.js';
+import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor, frameCaption } from '../dashboard/public/spectrum.js';
 
 test('splitByKind separates scanners from cameras (missing kind = camera)', () => {
   const { cameras, scanners } = splitByKind([
@@ -8,6 +8,25 @@ test('splitByKind separates scanners from cameras (missing kind = camera)', () =
   ]);
   assert.deepEqual(cameras.map((d) => d.id), ['a', 'b']);
   assert.deepEqual(scanners.map((d) => d.id), ['s']);
+});
+
+test('frameCaption combines standard, freq, snr, time', () => {
+  const cap = frameCaption({ standard: 'PAL', center_mhz: 5800, sync_snr_db: 18.3, ts: 1718700000 });
+  assert.match(cap, /PAL/);
+  assert.match(cap, /5800/);
+  assert.match(cap, /18\.3/);
+  assert.match(cap, /\d{2}:\d{2}:\d{2}/);     // HH:MM:SS, tz-independent shape
+});
+
+test('frameCaption tolerates missing snr and ts', () => {
+  const cap = frameCaption({ standard: 'NTSC', center_mhz: 1200 });
+  assert.match(cap, /NTSC/);
+  assert.match(cap, /1200/);
+  assert.doesNotMatch(cap, /SNR/);
+});
+
+test('frameCaption is empty for nullish input', () => {
+  assert.equal(frameCaption(null), '');
 });
 
 test('classColor maps the three classes distinctly, unknown is the default', () => {
