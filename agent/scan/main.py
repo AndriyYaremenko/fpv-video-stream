@@ -52,7 +52,7 @@ def _downsample(spec: Spectrum, points: int = 64) -> list:
     return [round(float(p[i]), 1) for i in idx]
 
 
-def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None) -> dict:
+def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller=None) -> dict:
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
@@ -95,6 +95,15 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None) -> dict:
                 except Exception:
                     LOG.exception("video emit failed")
 
+    if controller is not None:
+        try:
+            controller.update_targets(
+                [d.center_mhz for d in detections
+                 if d.band == "5.8G" and d.signal_class == "analog"]
+            )
+        except Exception:
+            LOG.exception("rx5808 update_targets failed")
+
     payload = build_payload(cfg.scanner_id, now_ts, detections, occupancy, spectrum_summary)
     write_state(cfg.state_path, payload)
     if publisher is not None:
@@ -132,10 +141,26 @@ def main() -> None:
             LOG.info("video emitter enabled (cooldown=%.0fs)", vcfg.emit_cooldown_s)
     except Exception:
         LOG.exception("video emitter init failed; continuing without video")
+    controller = None
+    try:
+        if cfg.rx5808_enabled:
+            from rx5808 import LgpioBackend, RX5808_CHANNELS
+            from rx5808_controller import Rx5808Controller
+            backend = LgpioBackend(clk=cfg.rx5808_clk, data=cfg.rx5808_data, le=cfg.rx5808_le)
+            controller = Rx5808Controller(
+                backend, publisher, cfg.scanner_id, RX5808_CHANNELS,
+                cfg.rx5808_dwell_s, cfg.rx5808_settle_ms,
+            )
+            controller.start()
+            LOG.info("rx5808 controller started (dwell=%.1fs clk/data/le=%d/%d/%d)",
+                     cfg.rx5808_dwell_s, cfg.rx5808_clk, cfg.rx5808_data, cfg.rx5808_le)
+    except Exception:
+        LOG.exception("rx5808 controller init failed; continuing without it")
     backoff = 1.0
     while True:
         try:
-            payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher, emitter=emitter)
+            payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher,
+                                emitter=emitter, controller=controller)
             holder.payload = payload
             backoff = 1.0
         except Exception:
