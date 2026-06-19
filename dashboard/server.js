@@ -8,6 +8,7 @@ import { addDevice, removeDevice, updateDevice, nextDeviceId, saveRegistry, load
 import { renderConfig } from '../lib/render-config.js';
 import { buildRtspPush, buildSrtPush } from '../lib/push-command.js';
 import { fetchPaths } from '../lib/mtx-api.js';
+import { DetectionJournal } from '../lib/detection-journal.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -62,6 +63,11 @@ export function createApp({ registry, getPaths, config }) {
 
   app.get('/api/mqtt', requireAuth, (req, res) => {
     res.json({ url: config.mqtt?.url || '', user: config.mqtt?.user || 'sub', pass: config.mqtt?.pass || '' });
+  });
+
+  app.get('/api/detections', requireAuth, (req, res) => {
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 200));
+    res.json(config.journal ? config.journal.events(limit) : []);
   });
 
   app.get('/api/devices', requireAuth, async (req, res) => {
@@ -197,6 +203,28 @@ export async function start() {
     // Persist registry only (for edits that don't affect MediaMTX auth/paths).
     saveRegistry: (reg) => saveRegistry(devicesFile, reg),
   };
+  const journal = new DetectionJournal({
+    file: env.DETECTIONS_FILE || join(dirname(mediamtxConfig), 'detections.json'),
+    max: Number(env.DETECTIONS_MAX || 2000),
+  });
+  config.journal = journal;
+  try {
+    const mqtt = (await import('mqtt')).default;
+    const client = mqtt.connect(env.MQTT_TCP_URL || 'mqtt://127.0.0.1:1883', {
+      username: config.mqtt.user, password: config.mqtt.pass, reconnectPeriod: 5000,
+    });
+    client.on('connect', () => client.subscribe('fpv/+/detection'));
+    client.on('message', (topic, buf) => {
+      const m = /^fpv\/([^/]+)\/detection$/.exec(topic);
+      if (!m) return;
+      let payload;
+      try { payload = JSON.parse(buf.toString()); } catch { return; }
+      try { journal.ingest(m[1], payload); } catch { /* never crash the server */ }
+    });
+    client.on('error', (e) => console.error('journal mqtt error:', e.message));
+  } catch (e) {
+    console.error('journal MQTT init failed; serving without live journal:', e.message);
+  }
   const app = createApp({ registry, getPaths: () => fetchPaths(apiBase), config });
   const host = env.DASH_HOST || '10.8.0.1';
   const port = Number(env.DASH_PORT || 8080);
