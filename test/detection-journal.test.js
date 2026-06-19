@@ -39,3 +39,20 @@ test('DetectionJournal: ingest logs changes, newest-first, capped, persists', ()
   assert.equal(reloaded.events(99).length, 3);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).length, 3);
 });
+
+test('diffDetections: ignores null/garbage detection entries', () => {
+  const { events, current } = diffDetections(new Map(), 'hackrf',
+    payload(1, [null, 42, { band: '5.8G', channel: 'F4', center_mhz: 5800, class: 'analog', snr_db: 28 }]), true);
+  assert.equal(events.length, 0);          // baseline
+  assert.equal(current.size, 1);           // only the valid object kept
+  assert.ok(current.has('5.8G:F4'));
+});
+
+test('DetectionJournal: bounds tracked scanners (LRU evict, re-baselines)', () => {
+  const j = new DetectionJournal({ file: '', max: 100, maxScanners: 2 });
+  j.ingest('a', payload(1, [{ band: '5.8G', channel: 'F1', center_mhz: 5740, class: 'analog' }]));  // baseline a
+  j.ingest('b', payload(1, [{ band: '5.8G', channel: 'F2', center_mhz: 5760, class: 'analog' }]));  // baseline b
+  j.ingest('c', payload(1, [{ band: '5.8G', channel: 'F3', center_mhz: 5780, class: 'analog' }]));  // baseline c -> evicts a
+  const evs = j.ingest('a', payload(2, [{ band: '5.8G', channel: 'F4', center_mhz: 5800, class: 'analog' }]));
+  assert.equal(evs.length, 0);             // 'a' evicted -> fresh baseline, no spurious events
+});

@@ -213,13 +213,19 @@ export async function start() {
     const client = mqtt.connect(env.MQTT_TCP_URL || 'mqtt://127.0.0.1:1883', {
       username: config.mqtt.user, password: config.mqtt.pass, reconnectPeriod: 5000,
     });
+    let lastWarn = 0;
     client.on('connect', () => client.subscribe('fpv/+/detection'));
     client.on('message', (topic, buf) => {
       const m = /^fpv\/([^/]+)\/detection$/.exec(topic);
       if (!m) return;
       let payload;
       try { payload = JSON.parse(buf.toString()); } catch { return; }
-      try { journal.ingest(m[1], payload); } catch { /* never crash the server */ }
+      try {
+        journal.ingest(m[1], payload);            // never crash the server on a bad message
+      } catch (e) {
+        const now = Date.now();
+        if (now - lastWarn > 60000) { lastWarn = now; console.warn('journal ingest error:', e.message); }
+      }
     });
     client.on('error', (e) => console.error('journal mqtt error:', e.message));
   } catch (e) {
