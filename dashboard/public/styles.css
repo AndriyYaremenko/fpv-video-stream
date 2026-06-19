@@ -117,3 +117,8 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .rx5808-ctl .rx-mode.active { color:#39d0ff; border-color:#39d0ff; }
 .rx5808-ctl .rx5808-ch { font-size:.75rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; }
 .band-cell .chart-line.tunable { cursor:crosshair; }
+
+/* detection journal modal */
+.jr-table { max-height:60vh; display:block; overflow:auto; }
+.jr-app { color:#3ddc84; font-weight:600; }
+.jr-gone { color:#9aa4b2; }
