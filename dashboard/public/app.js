@@ -1,6 +1,6 @@
 // dashboard/public/app.js — grid render, WHEP players, device management (add/delete/creds), tile sizing.
 import { startWhep } from '/whep.js';
-import { splitByKind, renderSpectrum } from '/spectrum.js';
+import { splitByKind, renderSpectrum, classColor, fmtFreq } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
@@ -102,6 +102,7 @@ document.getElementById('logout').addEventListener('click', async () => {
   location.href = '/login.html';
 });
 document.getElementById('add-device').addEventListener('click', openAddForm);
+document.getElementById('journal-btn').addEventListener('click', openJournal);
 document.getElementById('restart-all').addEventListener('click', restartAll);
 
 // ---- reusable form/creds modal ----
@@ -116,6 +117,7 @@ formModal.addEventListener('click', (e) => {
     const pre = copyBtn.closest('.cred-row').querySelector('pre');
     copyText(pre.textContent, copyBtn);
   }
+  if (e.target.closest('#journal-refresh')) openJournal();
 });
 
 async function copyText(text, btn) {
@@ -446,6 +448,41 @@ async function deleteScanner(id) {
   if (!res.ok) { alert('Помилка видалення'); return; }
   lastById.delete(id);
   // panel re-renders without this scanner on the next SSE tick
+}
+
+// ---- detection journal ----
+function journalHtml(events) {
+  const rows = (events || []).map((e) => {
+    const t = new Date(Number(e.ts) * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    const when = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+    const freq = `${fmtFreq(e.center_mhz)}${e.channel ? ` (${escapeHtml(e.channel)})` : ''}`;
+    const ev = e.event === 'gone'
+      ? '<span class="jr-gone">зник</span>' : '<span class="jr-app">з\'явився</span>';
+    return `<tr>
+      <td>${when}</td>
+      <td>${escapeHtml(e.scanner_id || '')}</td>
+      <td>${escapeHtml(e.band || '')}</td>
+      <td>${freq}</td>
+      <td><span style="color:${classColor(e.class)}">${escapeHtml(e.class || '')}</span></td>
+      <td>${e.snr_db == null ? '—' : escapeHtml(String(e.snr_db))} dB</td>
+      <td>${ev}</td></tr>`;
+  }).join('');
+  const table = (events && events.length)
+    ? `<table class="scan-table jr-table"><thead><tr><th>Час</th><th>Сканер</th><th>Бенд</th><th>Частота</th><th>Клас</th><th>SNR</th><th>Подія</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<p class="muted">Журнал порожній.</p>';
+  return `<h2>📜 Журнал детекцій <button type="button" id="journal-refresh" class="btn-ghost">оновити</button></h2>
+    ${table}
+    <div class="form-actions"><button type="button" data-close class="btn-primary">Закрити</button></div>`;
+}
+
+async function openJournal() {
+  let events = [];
+  try {
+    const res = await fetch('/api/detections?limit=200');
+    if (res.ok) events = await res.json();
+  } catch { /* show empty on failure */ }
+  showModal(journalHtml(events));
 }
 
 // ---- live updates ----
