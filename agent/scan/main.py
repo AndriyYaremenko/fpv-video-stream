@@ -105,6 +105,27 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                 except Exception:
                     LOG.exception("video emit failed")
 
+        # Also demod strong 5.8 carriers the strict detector missed: a narrow FPV video
+        # carrier fails the wide analog-video bandwidth gate, so feed the looser carrier
+        # list to the emitter and let extract_frame's line-sync check decide (only real
+        # analog video publishes a frame; the emitter's per-channel cooldown throttles it).
+        if band == "5.8G" and emitter is not None:
+            done = {round(c.center_mhz, 1) for c in cands[:budget]}
+            extra = 0
+            for center in rx_carrier_centers:
+                if extra >= budget:
+                    break
+                key = round(center, 1)
+                if key in done:
+                    continue
+                done.add(key)
+                extra += 1
+                try:
+                    iq = _get_iq(cfg, Candidate("5.8G", center, 0.0, 0.0, 0.0))
+                    emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, center, now_ts)
+                except Exception:
+                    LOG.exception("carrier video demod failed @ %.1f MHz", center)
+
     if controller is not None:
         try:
             controller.update_targets(rx_carrier_centers)
