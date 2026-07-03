@@ -34,6 +34,12 @@ class Config:
     lna_gain: int = 40                          # RX LNA/IF gain, 0-40 dB (8 dB steps)
     vga_gain: int = 20                          # RX VGA/baseband gain, 0-62 dB (2 dB steps)
     amp_enable: int = 0                         # RF front-end amp, 0/1 (on risks overload near strong TX)
+    sdr: str = "bladerf"                        # "bladerf" | "hackrf"
+    bladerf_sample_rate_hz: float = 40_000_000.0
+    bladerf_bandwidth_hz: float = 40_000_000.0
+    bladerf_window_mhz: float = 30.0            # usable span per tune (< bandwidth for filter margin)
+    bladerf_sweep_samples: int = 65_536         # IQ per window for the power spectrum
+    bladerf_gain_db: int = 40
     local_http_host: str = "127.0.0.1"
     local_http_port: int = 8077
     bands: Dict[str, Tuple[float, float]] = field(default_factory=lambda: {
@@ -78,6 +84,17 @@ def load_config(env: Optional[dict] = None) -> Config:
         c.vga_gain = int(env["SCAN_VGA"])
     if "SCAN_AMP" in env:
         c.amp_enable = int(env["SCAN_AMP"])
+    c.sdr = env.get("SCAN_SDR", c.sdr)
+    if "BLADERF_SAMPLE_RATE" in env:
+        c.bladerf_sample_rate_hz = float(env["BLADERF_SAMPLE_RATE"])
+    if "BLADERF_BANDWIDTH" in env:
+        c.bladerf_bandwidth_hz = float(env["BLADERF_BANDWIDTH"])
+    if "BLADERF_WINDOW_MHZ" in env:
+        c.bladerf_window_mhz = float(env["BLADERF_WINDOW_MHZ"])
+    if "BLADERF_SWEEP_SAMPLES" in env:
+        c.bladerf_sweep_samples = int(env["BLADERF_SWEEP_SAMPLES"])
+    if "BLADERF_GAIN" in env:
+        c.bladerf_gain_db = int(env["BLADERF_GAIN"])
     if "RX5808_ENABLED" in env:
         c.rx5808_enabled = env["RX5808_ENABLED"].strip().lower() not in ("0", "false", "no", "")
     if "RX5808_CLK" in env:
