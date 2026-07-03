@@ -4,6 +4,7 @@ import { splitByKind, renderSpectrum, classColor, fmtFreq } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
+import { galleryHtml } from '/frames-gallery.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
@@ -103,6 +104,7 @@ document.getElementById('logout').addEventListener('click', async () => {
 });
 document.getElementById('add-device').addEventListener('click', openAddForm);
 document.getElementById('journal-btn').addEventListener('click', openJournal);
+document.getElementById('frames-btn').addEventListener('click', openFrames);
 document.getElementById('restart-all').addEventListener('click', restartAll);
 
 // ---- reusable form/creds modal ----
@@ -118,6 +120,15 @@ formModal.addEventListener('click', (e) => {
     copyText(pre.textContent, copyBtn);
   }
   if (e.target.closest('#journal-refresh')) openJournal();
+  if (e.target.closest('#frames-refresh')) openFrames();
+  const frTile = e.target.closest('.fr-tile');
+  if (frTile) openImageModal(frTile.dataset.src, frTile.dataset.cap);
+});
+
+// Frames-gallery scanner filter -> re-render the modal from the cached list.
+formModal.addEventListener('change', (e) => {
+  const sel = e.target.closest('#frames-scanner');
+  if (sel) showModal(galleryHtml(framesCache, sel.value));
 });
 
 async function copyText(text, btn) {
@@ -483,6 +494,17 @@ async function openJournal() {
     if (res.ok) events = await res.json();
   } catch { /* show empty on failure */ }
   showModal(journalHtml(events));
+}
+
+// ---- frames gallery (server archive of demodulated frames) ----
+let framesCache = [];
+async function openFrames() {
+  framesCache = [];
+  try {
+    const res = await fetch('/api/frames?limit=200');
+    if (res.ok) framesCache = await res.json();
+  } catch { /* show empty on failure */ }
+  showModal(galleryHtml(framesCache));
 }
 
 // ---- live updates ----
