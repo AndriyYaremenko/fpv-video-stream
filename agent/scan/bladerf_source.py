@@ -66,3 +66,25 @@ def assemble_band_spectrum(parts, band: str) -> Spectrum:
     p = np.concatenate([p[1] for p in parts])
     order = np.argsort(f)
     return Spectrum(band=band, freqs_mhz=f[order], power_dbm=p[order])
+
+
+class BladerfBackend:
+    """Turns tuned IQ captures into Spectrum sweeps and dwell IQ. `capture` is injected so
+    the sweep/dwell logic is fully testable without hardware; production passes the real
+    bladeRF capture (see open_bladerf_capture)."""
+
+    def __init__(self, sample_rate_hz, window_mhz, sweep_samples, capture):
+        self.sample_rate_hz = float(sample_rate_hz)
+        self.window_mhz = float(window_mhz)
+        self.sweep_samples = int(sweep_samples)
+        self._capture = capture
+
+    def sweep_band(self, low_mhz, high_mhz, band) -> Spectrum:
+        parts = []
+        for c_mhz in plan_windows(low_mhz, high_mhz, self.window_mhz):
+            iq = self._capture(c_mhz * 1e6, self.sample_rate_hz, self.sweep_samples)
+            parts.append(window_spectrum(iq, c_mhz * 1e6, self.sample_rate_hz))
+        return assemble_band_spectrum(parts, band)
+
+    def dwell(self, center_mhz, sample_rate_hz, num_samples) -> np.ndarray:
+        return self._capture(center_mhz * 1e6, float(sample_rate_hz), int(num_samples))
