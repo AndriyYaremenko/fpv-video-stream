@@ -86,3 +86,40 @@ test('filePath: serves only well-formed, indexed, on-disk ids', () => {
   assert.equal(a.filePath('hackrf', '../../etc/passwd'), null);       // traversal
   assert.equal(a.filePath('hackrf', '100000_5865.PNG'), null);        // strict name
 });
+
+test('prune drops old entries AND deletes their files, persists, returns count', () => {
+  const dir = tmp();
+  const idx = join(dir, 'i.json');
+  const a = new FrameArchive({ dir, indexFile: idx });
+  a.ingest('hackrf', payload(1000, 5865));                  // old
+  a.ingest('hackrf', payload(2000, 5800));                  // fresh
+  const oldFile = join(dir, 'hackrf', '1000000_5865.png');
+  assert.ok(existsSync(oldFile));
+  // now = 2000s in ms; maxAge = 500s → cutoff 1500s: drops ts=1000, keeps ts=2000
+  const removed = a.prune(2000 * 1000, 500 * 1000);
+  assert.equal(removed, 1);
+  assert.ok(!existsSync(oldFile));                          // file deleted, not just the entry
+  assert.deepEqual(a.list().map((f) => f.ts), [2000]);
+  assert.equal(JSON.parse(readFileSync(idx, 'utf8')).length, 1);
+  assert.equal(a.prune(2000 * 1000, 500 * 1000), 0);        // idempotent
+});
+
+test('reloads the persisted index; filePath works after reload', () => {
+  const dir = tmp();
+  const idx = join(dir, 'i.json');
+  new FrameArchive({ dir, indexFile: idx }).ingest('hackrf', payload(100, 5865));
+  const b = new FrameArchive({ dir, indexFile: idx });
+  assert.equal(b.list().length, 1);
+  assert.ok(b.filePath('hackrf', '100000_5865.png'));
+  assert.equal(b.ingest('hackrf', payload(100, 5865)), null);   // dedupe survives restart
+});
+
+test('count cap evicts the oldest entry and its file', () => {
+  const dir = tmp();
+  const a = new FrameArchive({ dir, indexFile: join(dir, 'i.json'), max: 2 });
+  a.ingest('hackrf', payload(100, 5865));
+  a.ingest('hackrf', payload(200, 5800));
+  a.ingest('hackrf', payload(300, 5745));
+  assert.deepEqual(a.list().map((f) => f.ts), [300, 200]);
+  assert.ok(!existsSync(join(dir, 'hackrf', '100000_5865.png')));
+});
