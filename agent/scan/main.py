@@ -20,20 +20,31 @@ from models import Spectrum, Candidate, Detection
 LOG = logging.getLogger("scan")
 
 _BLADERF_BACKEND = None
+_BLADERF_DEVICE = None
 
 
 def _get_bladerf_backend(cfg: Config):
-    global _BLADERF_BACKEND
+    global _BLADERF_BACKEND, _BLADERF_DEVICE
     if _BLADERF_BACKEND is None:
         from bladerf_source import BladerfBackend, open_bladerf_capture
-        dev = open_bladerf_capture(cfg.bladerf_gain_db, cfg.bladerf_bandwidth_hz)
-        # dev.capture is a bound method (center_hz, sample_rate_hz, num_samples) -> iq.
-        # The backend keeps a reference to it, which keeps `dev` alive (no premature close).
+        _BLADERF_DEVICE = open_bladerf_capture(cfg.bladerf_gain_db, cfg.bladerf_bandwidth_hz)
         _BLADERF_BACKEND = BladerfBackend(
             cfg.bladerf_sample_rate_hz, cfg.bladerf_window_mhz, cfg.bladerf_sweep_samples,
-            capture=dev.capture,
+            capture=_BLADERF_DEVICE.capture,
         )
     return _BLADERF_BACKEND
+
+
+def _reset_bladerf_backend():
+    """Invalidate the cached bladeRF backend after a device error so the next cycle reopens it."""
+    global _BLADERF_BACKEND, _BLADERF_DEVICE
+    if _BLADERF_DEVICE is not None:
+        try:
+            _BLADERF_DEVICE.close()
+        except Exception:
+            LOG.exception("bladeRF close failed")
+    _BLADERF_BACKEND = None
+    _BLADERF_DEVICE = None
 
 
 def _get_spectrum(cfg: Config, band: str, brange) -> Spectrum:
@@ -203,11 +214,14 @@ def main() -> None:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
             # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF
             # wedged on flaky USB hosts; re-enumerate it so the next cycle starts clean.
-            if cfg.source == "live" and cfg.sdr == "hackrf":
-                try:
-                    reset_hackrf()
-                except Exception:
-                    LOG.exception("device reset failed")
+            if cfg.source == "live":
+                if cfg.sdr == "hackrf":
+                    try:
+                        reset_hackrf()
+                    except Exception:
+                        LOG.exception("device reset failed")
+                elif cfg.sdr == "bladerf":
+                    _reset_bladerf_backend()
             time.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
             continue

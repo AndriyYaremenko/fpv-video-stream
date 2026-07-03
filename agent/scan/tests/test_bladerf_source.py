@@ -121,6 +121,9 @@ def test_bladerf_device_retunes_and_converts():
     assert ("freq", 5_800_000_000) in events
     assert ("sr", 40_000_000) in events
     assert ("gain", 30) in events
+    assert ("bw", 18_000_000) in events
+    assert ("gainmode", "manual") in events
+    assert any(e[0] == "sync_config" for e in events)
     assert len(iq) == 2
     assert abs(iq[0] - (1 + 0j)) < 1e-6 and abs(iq[1] - (0 + 1j)) < 1e-6
 

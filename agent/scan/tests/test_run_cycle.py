@@ -196,3 +196,16 @@ def test_run_cycle_uses_bladerf_backend(tmp_path, monkeypatch):
     assert payload["occupancy"]["5.8G"] > 0.0
     assert len(payload["detections"]) == 1
     assert abs(payload["detections"][0]["center_mhz"] - 5800.0) < 2.0
+
+
+def test_reset_bladerf_backend_invalidates_and_closes():
+    closed = []
+    class _FakeDev:
+        def close(self):
+            closed.append(True)
+    main._BLADERF_DEVICE = _FakeDev()
+    main._BLADERF_BACKEND = object()
+    main._reset_bladerf_backend()
+    assert main._BLADERF_BACKEND is None
+    assert main._BLADERF_DEVICE is None
+    assert closed == [True]

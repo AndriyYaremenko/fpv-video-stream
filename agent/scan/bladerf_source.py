@@ -34,7 +34,7 @@ def welch_psd(iq: np.ndarray, seg: int = 1024) -> np.ndarray:
     return acc / used if used else np.zeros(seg)
 
 
-def plan_windows(low_mhz: float, high_mhz: float, window_mhz: float) -> list:
+def plan_windows(low_mhz: float, high_mhz: float, window_mhz: float) -> list[float]:
     """Window center frequencies (MHz) that tile [low, high] in `window_mhz` steps."""
     if high_mhz <= low_mhz or window_mhz <= 0:
         return []
@@ -46,7 +46,7 @@ def plan_windows(low_mhz: float, high_mhz: float, window_mhz: float) -> list:
     return centers
 
 
-def window_spectrum(iq: np.ndarray, center_hz: float, sample_rate_hz: float, seg: int = 1024):
+def window_spectrum(iq: np.ndarray, center_hz: float, sample_rate_hz: float, seg: int = 1024) -> tuple[np.ndarray, np.ndarray]:
     """One tuned window -> (freqs_mhz, power_db) with absolute frequency axis."""
     psd = welch_psd(iq, seg)
     n = len(psd)

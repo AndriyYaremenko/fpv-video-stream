@@ -37,7 +37,7 @@ class Config:
     sdr: str = "bladerf"                        # "bladerf" | "hackrf"
     bladerf_sample_rate_hz: float = 40_000_000.0
     bladerf_bandwidth_hz: float = 40_000_000.0
-    bladerf_window_mhz: float = 30.0            # usable span per tune (< bandwidth for filter margin)
+    bladerf_window_mhz: float = 30.0            # tuning step between window centers (windows overlap: window_spectrum emits the full sample_rate span)
     bladerf_sweep_samples: int = 65_536         # IQ per window for the power spectrum
     bladerf_gain_db: int = 40
     local_http_host: str = "127.0.0.1"
