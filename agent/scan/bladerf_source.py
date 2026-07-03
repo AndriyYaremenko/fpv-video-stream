@@ -134,10 +134,11 @@ def open_bladerf_capture(gain_db, bandwidth_hz) -> BladerfDevice:
     """Open the first bladeRF, resolve channel/enums, and return a configured BladerfDevice.
     The only function that imports `bladerf`. Raises on no device."""
     import bladerf
-    radio = bladerf.BladeRF()
+    from bladerf import _bladerf            # BladeRF/CHANNEL_RX are re-exported at top level;
+    radio = bladerf.BladeRF()               # the GainMode/Format/ChannelLayout enums are not.
     return BladerfDevice(
         radio, bladerf.CHANNEL_RX(0), gain_db, bandwidth_hz,
-        gain_mode=bladerf.GainMode.Manual,
-        layout=bladerf.ChannelLayout.RX_X1,
-        fmt=bladerf.Format.SC16_Q11,
+        gain_mode=_bladerf.GainMode.Manual,
+        layout=_bladerf.ChannelLayout.RX_X1,
+        fmt=_bladerf.Format.SC16_Q11,
     )
