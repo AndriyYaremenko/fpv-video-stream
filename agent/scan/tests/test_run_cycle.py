@@ -192,3 +192,39 @@ def test_run_cycle_demods_narrow_5_8_carrier_missed_by_strict_detector(tmp_path)
     # ...but the emitter still got a demod attempt on the loose 5.8 carrier near 5865
     assert len(em.calls) >= 1
     assert any(abs(center - 5865) <= 2 for _, center, _ in em.calls)
+
+
+def test_run_cycle_demods_carrier_in_non_5_8_band(tmp_path):
+    # The video demod runs in EVERY band, not just 5.8: a narrow carrier in a 3.3 GHz band
+    # gets a demod attempt, and it is NOT sent to the RX5808 (a 5.8-only receiver).
+    lo = 3400_000000
+    bins = []
+    for i in range(200):                        # 3400..3600 MHz, 1 MHz bins
+        f_mhz = 3400 + i
+        bins.append(-50.0 if 3469 <= f_mhz <= 3471 else -90.0)   # 3 MHz spike @ 3470
+    row = ["2024-01-01", "12:00:00.0", str(lo), str(lo + 200_000000), "1000000.0", "20"]
+    row += [str(x) for x in bins]
+    (tmp_path / "sweep_3.3G.csv").write_text(", ".join(row) + "\n", encoding="utf-8")
+    fs = 20_000_000.0
+    n = 40_000
+    t = np.arange(n) / fs
+    tone = np.exp(2j * np.pi * 1.0e6 * t)
+    iq8 = np.empty(2 * n, dtype=np.int8)
+    iq8[0::2] = np.clip(np.real(tone) * 100, -127, 127).astype(np.int8)
+    iq8[1::2] = np.clip(np.imag(tone) * 100, -127, 127).astype(np.int8)
+    (tmp_path / "iq_3.3G.bin").write_bytes(iq8.tobytes())
+
+    cfg = Config()
+    cfg.source = "replay"
+    cfg.fixtures_dir = str(tmp_path)
+    cfg.state_path = str(tmp_path / "scan.json")
+    cfg.bands = {"3.3G": (3400.0, 3600.0)}
+    em = _FakeEmitter()
+    ctl = _FakeController()
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em, controller=ctl)
+
+    # video demod attempted on the 3.47 GHz carrier
+    assert any(abs(center - 3470) <= 2 for _, center, _ in em.calls)
+    # ...but it is NOT fed to the RX5808 (out of its 5.8 GHz range)
+    assert ctl.targets == []

@@ -53,11 +53,34 @@ class Config:
     thresholds: Thresholds = field(default_factory=Thresholds)
 
 
+def parse_bands(spec: str) -> Dict[str, Tuple[float, float]]:
+    """Parse a SCAN_BANDS string 'name:lo-hi,name:lo-hi,...' (MHz) into a bands dict.
+    Malformed entries are skipped. Returns {} if nothing parsed."""
+    out: Dict[str, Tuple[float, float]] = {}
+    for part in spec.split(","):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        name, rng = part.split(":", 1)
+        if "-" not in rng:
+            continue
+        lo, hi = rng.split("-", 1)
+        try:
+            out[name.strip()] = (float(lo), float(hi))
+        except ValueError:
+            continue
+    return out
+
+
 def load_config(env: Optional[dict] = None) -> Config:
     env = os.environ if env is None else env
     c = Config()
     c.scanner_id = env.get("SCAN_ID", c.scanner_id)
     c.source = env.get("SCAN_SOURCE", c.source)
+    if "SCAN_BANDS" in env:
+        parsed = parse_bands(env["SCAN_BANDS"])
+        if parsed:
+            c.bands = parsed
     c.mqtt_host = env.get("SCAN_MQTT_HOST", c.mqtt_host)
     if "SCAN_MQTT_PORT" in env:
         c.mqtt_port = int(env["SCAN_MQTT_PORT"])

@@ -19,6 +19,10 @@ from models import Spectrum, Candidate, Detection
 
 LOG = logging.getLogger("scan")
 
+# Per-band cap on video-demod attempts for narrow carriers the strict detector missed
+# (bounds the extra dwell time added to each sweep cycle).
+_MAX_CARRIER_DEMODS_PER_BAND = 3
+
 
 def _get_spectrum(cfg: Config, band: str, brange) -> Spectrum:
     if cfg.source == "replay":
@@ -70,14 +74,14 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
         )
         cands.sort(key=lambda c: c.power_dbm, reverse=True)
 
-        if band == "5.8G":
-            # RX5808 targeting: any strong carrier on 5.8 (looser thresholds than the main
-            # detector), so narrow real FPV carriers are tuned even though they fail the
-            # wide analog-video gate. Independent of classify; main detection unchanged.
-            rx_carrier_centers = [
-                c.center_mhz for c in find_candidates(
-                    spec, cfg.rx5808_carrier_snr_db, cfg.rx5808_carrier_min_bw_mhz)
-            ]
+        # Looser carrier list for THIS band (SNR/bandwidth below the analog-video gate):
+        # catches narrow real FPV carriers the strict detector misses.
+        loose = find_candidates(spec, cfg.rx5808_carrier_snr_db, cfg.rx5808_carrier_min_bw_mhz)
+        # RX5808 targeting: only carriers inside the 5.8 GHz receiver's tuning range (by
+        # frequency, so it works whatever band covers 5.8 — including a wide full-spectrum band).
+        rx_carrier_centers.extend(
+            c.center_mhz for c in loose if 5645.0 <= c.center_mhz <= 5945.0
+        )
 
         budget = cfg.max_dwells_per_cycle
         for i, c in enumerate(cands):
@@ -105,26 +109,26 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                 except Exception:
                     LOG.exception("video emit failed")
 
-        # Also demod strong 5.8 carriers the strict detector missed: a narrow FPV video
-        # carrier fails the wide analog-video bandwidth gate, so feed the looser carrier
-        # list to the emitter and let extract_frame's line-sync check decide (only real
-        # analog video publishes a frame; the emitter's per-channel cooldown throttles it).
-        if band == "5.8G" and emitter is not None:
+        # Demod strong carriers the strict detector missed, in EVERY band: a narrow analog
+        # video carrier fails the wide analog-video bandwidth gate, so feed the looser carrier
+        # list to the emitter and let extract_frame's line-sync check decide (only real analog
+        # video publishes; the per-channel cooldown throttles reprocessing). Capped per band.
+        if emitter is not None:
             done = {round(c.center_mhz, 1) for c in cands[:budget]}
             extra = 0
-            for center in rx_carrier_centers:
-                if extra >= budget:
+            for c in loose:
+                if extra >= _MAX_CARRIER_DEMODS_PER_BAND:
                     break
-                key = round(center, 1)
+                key = round(c.center_mhz, 1)
                 if key in done:
                     continue
                 done.add(key)
                 extra += 1
                 try:
-                    iq = _get_iq(cfg, Candidate("5.8G", center, 0.0, 0.0, 0.0))
-                    emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, center, now_ts)
+                    iq = _get_iq(cfg, Candidate(band, c.center_mhz, 0.0, 0.0, 0.0))
+                    emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts)
                 except Exception:
-                    LOG.exception("carrier video demod failed @ %.1f MHz", center)
+                    LOG.exception("carrier video demod failed @ %.1f MHz", c.center_mhz)
 
     if controller is not None:
         try:
