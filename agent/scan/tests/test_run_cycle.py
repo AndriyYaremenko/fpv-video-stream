@@ -156,3 +156,43 @@ def test_run_cycle_feeds_rx5808_carriers_regardless_of_class(tmp_path, monkeypat
 
     assert len(ctl.targets) == 1
     assert abs(ctl.targets[0] - 5800.0) < 2.0
+
+
+def test_run_cycle_uses_bladerf_backend(tmp_path, monkeypatch):
+    # Verify the acquisition seam routes through the bladeRF backend when cfg.sdr=="bladerf".
+    # A fake backend returns a crafted wide bump (same shape as the HackRF sweep fixture) so the
+    # detector finds one candidate — no hardware, no dependence on DSP window geometry.
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "bladerf"
+    cfg.state_path = str(tmp_path / "scan.json")
+    cfg.bands = {"5.8G": (5645.0, 5945.0)}
+
+    from models import Spectrum
+
+    class _FakeBackend:
+        def __init__(self):
+            self.swept = []
+            self.dwelled = []
+
+        def sweep_band(self, low_mhz, high_mhz, band):
+            self.swept.append((low_mhz, high_mhz, band))
+            freqs = np.arange(5645.0, 5945.0, 1.0)                              # 1 MHz bins
+            power = np.where((freqs >= 5789) & (freqs <= 5811), -50.0, -90.0)   # 22 MHz bump @ 5800
+            return Spectrum(band=band, freqs_mhz=freqs, power_dbm=power)
+
+        def dwell(self, center_mhz, sample_rate_hz, num_samples):
+            self.dwelled.append((center_mhz, sample_rate_hz, num_samples))
+            t = np.arange(num_samples) / sample_rate_hz
+            return np.exp(2j * np.pi * 1.0e6 * t).astype(np.complex64)
+
+    be = _FakeBackend()
+    monkeypatch.setattr(main, "_get_bladerf_backend", lambda c: be)
+
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub())
+
+    assert be.swept == [(5645.0, 5945.0, "5.8G")]                 # seam used the bladeRF backend's sweep
+    assert len(be.dwelled) >= 1                                   # and its dwell for the candidate IQ
+    assert payload["occupancy"]["5.8G"] > 0.0
+    assert len(payload["detections"]) == 1
+    assert abs(payload["detections"][0]["center_mhz"] - 5800.0) < 2.0

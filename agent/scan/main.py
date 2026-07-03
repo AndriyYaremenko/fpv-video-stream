@@ -19,11 +19,29 @@ from models import Spectrum, Candidate, Detection
 
 LOG = logging.getLogger("scan")
 
+_BLADERF_BACKEND = None
+
+
+def _get_bladerf_backend(cfg: Config):
+    global _BLADERF_BACKEND
+    if _BLADERF_BACKEND is None:
+        from bladerf_source import BladerfBackend, open_bladerf_capture
+        dev = open_bladerf_capture(cfg.bladerf_gain_db, cfg.bladerf_bandwidth_hz)
+        # dev.capture is a bound method (center_hz, sample_rate_hz, num_samples) -> iq.
+        # The backend keeps a reference to it, which keeps `dev` alive (no premature close).
+        _BLADERF_BACKEND = BladerfBackend(
+            cfg.bladerf_sample_rate_hz, cfg.bladerf_window_mhz, cfg.bladerf_sweep_samples,
+            capture=dev.capture,
+        )
+    return _BLADERF_BACKEND
+
 
 def _get_spectrum(cfg: Config, band: str, brange) -> Spectrum:
     if cfg.source == "replay":
         path = os.path.join(cfg.fixtures_dir, f"sweep_{band}.csv")
         return sweep_replay(path, band)
+    if cfg.sdr == "bladerf":
+        return _get_bladerf_backend(cfg).sweep_band(brange[0], brange[1], band)
     lines = sweep_live(brange[0], brange[1], cfg.sweep_bin_hz, cfg.lna_gain, cfg.vga_gain, cfg.amp_enable)
     return parse_sweep_output(lines, band)
 
@@ -32,6 +50,8 @@ def _get_iq(cfg: Config, cand: Candidate) -> np.ndarray:
     if cfg.source == "replay":
         path = os.path.join(cfg.fixtures_dir, f"iq_{cand.band}.bin")
         return dwell_replay(path)
+    if cfg.sdr == "bladerf":
+        return _get_bladerf_backend(cfg).dwell(cand.center_mhz, cfg.dwell_sample_rate_hz, cfg.dwell_num_samples)
     return dwell_live(cand.center_mhz, cfg.dwell_sample_rate_hz, cfg.dwell_num_samples,
                       cfg.lna_gain, cfg.vga_gain, cfg.amp_enable)
 
@@ -183,7 +203,7 @@ def main() -> None:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
             # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF
             # wedged on flaky USB hosts; re-enumerate it so the next cycle starts clean.
-            if cfg.source == "live":
+            if cfg.source == "live" and cfg.sdr == "hackrf":
                 try:
                     reset_hackrf()
                 except Exception:
