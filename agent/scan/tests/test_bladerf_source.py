@@ -123,3 +123,14 @@ def test_bladerf_device_retunes_and_converts():
     assert ("gain", 30) in events
     assert len(iq) == 2
     assert abs(iq[0] - (1 + 0j)) < 1e-6 and abs(iq[1] - (0 + 1j)) < 1e-6
+
+    # sample-rate is cached: a second capture at the same rate does not re-set it,
+    # and the module is enabled only once.
+    dev.capture(5_800_000_000.0, 40_000_000.0, 2)
+    assert events.count(("sr", 40_000_000)) == 1
+    assert events.count(("enable", True)) == 1
+    # close() disables the module AND clears the enabled flag, so a later capture re-enables.
+    dev.close()
+    assert ("enable", False) in events
+    dev.capture(5_800_000_000.0, 40_000_000.0, 2)
+    assert events.count(("enable", True)) == 2      # re-enabled after close

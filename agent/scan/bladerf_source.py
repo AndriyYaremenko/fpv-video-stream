@@ -125,6 +125,7 @@ class BladerfDevice:
         try:
             if self._enabled:
                 self._radio.enable_module(self._ch, False)
+                self._enabled = False
         except Exception:
             LOG.exception("bladeRF disable failed")
 
