@@ -70,6 +70,24 @@ export function createApp({ registry, getPaths, config }) {
     res.json(config.journal ? config.journal.events(limit) : []);
   });
 
+  app.get('/api/frames', requireAuth, (req, res) => {
+    if (!config.frames) return res.json([]);
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 200));
+    res.json(config.frames.list({
+      scanner: String(req.query.scanner || ''),
+      since: Number(req.query.since) || 0,
+      limit,
+    }));
+  });
+
+  // Frame id is "<scanner>/<tsMs>_<centerMhz>"; the archive validates both
+  // segments (no path traversal) and 404s ids that were pruned.
+  app.get('/api/frames/:scanner/:file', requireAuth, (req, res) => {
+    const path = config.frames ? config.frames.filePath(req.params.scanner, req.params.file) : null;
+    if (!path) return res.status(404).json({ error: 'frame not found' });
+    res.sendFile(path);
+  });
+
   app.get('/api/devices', requireAuth, async (req, res) => {
     try {
       res.json(await snapshot());
