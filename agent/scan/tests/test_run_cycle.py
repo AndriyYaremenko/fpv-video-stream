@@ -93,9 +93,11 @@ def test_run_cycle_without_publisher_still_writes_state(tmp_path):
 class _FakeEmitter:
     def __init__(self):
         self.calls = []      # (fs, center_mhz, now_ts)
+        self.last_frame_path = None
 
     def maybe_emit(self, iq, fs, center_mhz, now_ts):
         self.calls.append((fs, center_mhz, now_ts))
+        self.last_frame_path = "/frames/%d_%d.png" % (now_ts, round(center_mhz))
         return "published"
 
 
@@ -192,6 +194,38 @@ def test_run_cycle_demods_narrow_5_8_carrier_missed_by_strict_detector(tmp_path)
     # ...but the emitter still got a demod attempt on the loose 5.8 carrier near 5865
     assert len(em.calls) >= 1
     assert any(abs(center - 5865) <= 2 for _, center, _ in em.calls)
+
+
+def test_run_cycle_logs_each_detection_with_frame_link(tmp_path, monkeypatch, caplog):
+    import logging
+    _write_fixtures(tmp_path)                       # 22 MHz bump @5800 -> one candidate
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()
+    monkeypatch.setattr(main, "classify", lambda feat, thr: ("analog", 0.9))
+
+    with caplog.at_level(logging.INFO):
+        main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em)
+
+    det_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("detection ")]
+    assert len(det_lines) == 1                       # one log line per detection
+    line = det_lines[0]
+    assert "band=5.8G" in line and "class=analog" in line
+    assert "frame=/frames/" in line and "frame=-" not in line   # frame linked to the analog detection
+
+
+def test_run_cycle_logs_non_analog_detection_without_frame(tmp_path, monkeypatch, caplog):
+    import logging
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()
+    monkeypatch.setattr(main, "classify", lambda feat, thr: ("digital", 0.7))
+
+    with caplog.at_level(logging.INFO):
+        main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em)
+
+    det_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("detection ")]
+    assert len(det_lines) == 1
+    assert "class=digital" in det_lines[0] and "frame=-" in det_lines[0]   # no frame for non-analog
 
 
 def test_run_cycle_demods_carrier_in_non_5_8_band(tmp_path):

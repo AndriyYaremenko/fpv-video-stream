@@ -91,7 +91,7 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
             iq = _get_iq(cfg, c)
             feat = compute_features(iq, cfg.dwell_sample_rate_hz)
             cls, conf = classify(feat, cfg.thresholds)
-            detections.append(Detection(
+            det = Detection(
                 ts=now_ts,
                 band=band,
                 center_mhz=c.center_mhz,
@@ -101,13 +101,20 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                 signal_class=cls,
                 confidence=conf,
                 channel=nearest_channel(c.center_mhz),
-            ))
+            )
+            detections.append(det)
 
+            frame = None
             if emitter is not None and cls == "analog":
                 try:
-                    emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts)
+                    if emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts) == "published":
+                        frame = emitter.last_frame_path
                 except Exception:
                     LOG.exception("video emit failed")
+
+            LOG.info("detection band=%s center=%.1fMHz class=%s snr=%.1fdB bw=%.1fMHz ch=%s frame=%s",
+                     det.band, det.center_mhz, det.signal_class, det.snr_db,
+                     det.bandwidth_mhz, det.channel or "-", frame or "-")
 
         # Demod strong carriers the strict detector missed, in EVERY band: a narrow analog
         # video carrier fails the wide analog-video bandwidth gate, so feed the looser carrier
@@ -126,7 +133,9 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                 extra += 1
                 try:
                     iq = _get_iq(cfg, Candidate(band, c.center_mhz, 0.0, 0.0, 0.0))
-                    emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts)
+                    if emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts) == "published":
+                        LOG.info("carrier video band=%s center=%.1fMHz frame=%s",
+                                 band, c.center_mhz, emitter.last_frame_path)
                 except Exception:
                     LOG.exception("carrier video demod failed @ %.1f MHz", c.center_mhz)
 
