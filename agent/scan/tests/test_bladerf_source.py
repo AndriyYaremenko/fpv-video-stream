@@ -95,3 +95,31 @@ def test_backend_dwell_passes_through_capture():
     iq = be.dwell(5800.0, 20_000_000.0, 4096)
     assert len(iq) == 4096
     assert seen == {"center_hz": 5_800_000_000.0, "sr": 20_000_000.0, "n": 4096}
+
+
+def test_bladerf_device_retunes_and_converts():
+    import bladerf_source as bs
+
+    events = []
+
+    class _FakeRadio:
+        def set_sample_rate(self, ch, v): events.append(("sr", int(v)))
+        def set_bandwidth(self, ch, v): events.append(("bw", int(v)))
+        def set_frequency(self, ch, v): events.append(("freq", int(v)))
+        def set_gain_mode(self, ch, m): events.append(("gainmode", m))
+        def set_gain(self, ch, v): events.append(("gain", int(v)))
+        def sync_config(self, **kw): events.append(("sync_config", kw.get("num_buffers")))
+        def enable_module(self, ch, on): events.append(("enable", on))
+        def sync_rx(self, buf, n):
+            # two samples: (2048,0) -> 1+0j, (0,2048) -> 0+1j
+            buf[:] = np.array([2048, 0, 0, 2048], dtype="int16").tobytes()
+
+    dev = bs.BladerfDevice(_FakeRadio(), channel="RX0", gain_db=30, bandwidth_hz=18_000_000.0,
+                           gain_mode="manual", layout="RX_X1", fmt="SC16_Q11")
+    iq = dev.capture(5_800_000_000.0, 40_000_000.0, 2)
+
+    assert ("freq", 5_800_000_000) in events
+    assert ("sr", 40_000_000) in events
+    assert ("gain", 30) in events
+    assert len(iq) == 2
+    assert abs(iq[0] - (1 + 0j)) < 1e-6 and abs(iq[1] - (0 + 1j)) < 1e-6

@@ -88,3 +88,55 @@ class BladerfBackend:
 
     def dwell(self, center_mhz, sample_rate_hz, num_samples) -> np.ndarray:
         return self._capture(center_mhz * 1e6, float(sample_rate_hz), int(num_samples))
+
+
+class BladerfDevice:
+    """Holds an open bladeRF RX channel and captures a block of IQ per call, retuning as needed.
+    The radio handle, channel object, and libbladeRF enums are injected (see open_bladerf_capture)
+    so this class imports nothing from `bladerf` and is fully testable with a fake radio."""
+
+    def __init__(self, radio, channel, gain_db, bandwidth_hz, gain_mode, layout, fmt):
+        self._radio = radio
+        self._ch = channel
+        self._enabled = False
+        self._sr = None
+        radio.set_gain_mode(channel, gain_mode)
+        radio.set_gain(channel, int(gain_db))
+        radio.set_bandwidth(channel, int(bandwidth_hz))
+        radio.sync_config(
+            layout=layout, fmt=fmt,
+            num_buffers=16, buffer_size=8192, num_transfers=8, stream_timeout=3500,
+        )
+
+    def capture(self, center_hz, sample_rate_hz, num_samples) -> np.ndarray:
+        sr = int(sample_rate_hz)
+        if sr != self._sr:
+            self._radio.set_sample_rate(self._ch, sr)
+            self._sr = sr
+        self._radio.set_frequency(self._ch, int(center_hz))
+        if not self._enabled:
+            self._radio.enable_module(self._ch, True)
+            self._enabled = True
+        buf = bytearray(int(num_samples) * 4)          # SC16_Q11 = 2 x int16 per sample
+        self._radio.sync_rx(buf, int(num_samples))
+        return iq_from_sc16q11(bytes(buf))
+
+    def close(self):
+        try:
+            if self._enabled:
+                self._radio.enable_module(self._ch, False)
+        except Exception:
+            LOG.exception("bladeRF disable failed")
+
+
+def open_bladerf_capture(gain_db, bandwidth_hz) -> BladerfDevice:
+    """Open the first bladeRF, resolve channel/enums, and return a configured BladerfDevice.
+    The only function that imports `bladerf`. Raises on no device."""
+    import bladerf
+    radio = bladerf.BladeRF()
+    return BladerfDevice(
+        radio, bladerf.CHANNEL_RX(0), gain_db, bandwidth_hz,
+        gain_mode=bladerf.GainMode.Manual,
+        layout=bladerf.ChannelLayout.RX_X1,
+        fmt=bladerf.Format.SC16_Q11,
+    )

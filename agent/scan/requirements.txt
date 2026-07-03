@@ -9,3 +9,9 @@ Pillow>=10.0
 #   ln -sf /usr/lib/python3/dist-packages/_lgpio.*.so "$SP/"
 # The scan service imports lgpio lazily and is guarded, so its absence only disables RX5808.
 pytest>=8.0
+# bladeRF host tools + Python bindings (Pi only, not pip-resolvable as a wheel on aarch64):
+#   sudo apt-get install -y bladerf libbladerf-dev python3-bladerf
+#   # if python3-bladerf is absent on Debian 13, install the binding from the bladeRF source
+#   # tree (host/libraries/libbladeRF_bindings/python) into the venv, like lgpio.
+# bladerf_source imports `bladerf` lazily inside BladerfDevice, so its absence only disables
+# the bladeRF backend (SCAN_SDR=hackrf still works with no bladerf installed).
