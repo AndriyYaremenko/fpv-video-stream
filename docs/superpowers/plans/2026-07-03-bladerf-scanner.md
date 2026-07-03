@@ -299,11 +299,13 @@ from bladerf_source import BladerfBackend
 
 
 def _fake_capture_factory(fs):
-    # Returns a capture() that emits a +6 MHz tone only when the window covers 5800 MHz.
+    # Emit a +3 MHz tone ONLY in the window centered at 5810 MHz — a real plan_windows
+    # center for 5645..5945 @ 30 MHz (there is no window exactly at 5800). Other windows
+    # return near-silence, so the assembled spectrum has one clear peak at 5813 MHz.
     def capture(center_hz, sample_rate_hz, num_samples):
         t = np.arange(num_samples) / sample_rate_hz
-        near_5800 = abs(center_hz - 5_800_000_000.0) <= (sample_rate_hz / 2.0)
-        amp = 1.0 if near_5800 else 0.001
+        in_target = abs(center_hz - 5_810_000_000.0) < 1_000_000.0
+        amp = 1.0 if in_target else 0.001
         return (amp * np.exp(2j * np.pi * 3.0e6 * t)).astype(np.complex64)
     return capture
 
@@ -321,9 +323,9 @@ def test_backend_sweep_band_finds_bump():
     assert len(spec.freqs_mhz) > 0
     # every window captured at the configured sweep sample rate + sample count
     assert all(s == fs and n == 8192 for _, s, n in calls)
-    # the strongest bin sits near the injected signal (5800 + 3 MHz)
+    # the strongest bin sits at the injected signal (5810 window + 3 MHz = 5813 MHz)
     peak_mhz = spec.freqs_mhz[int(np.argmax(spec.power_dbm))]
-    assert abs(peak_mhz - 5803.0) < 1.0
+    assert abs(peak_mhz - 5813.0) < 1.0
 
 
 def test_backend_dwell_passes_through_capture():
@@ -548,33 +550,43 @@ Add to `agent/scan/tests/test_run_cycle.py`:
 
 ```python
 def test_run_cycle_uses_bladerf_backend(tmp_path, monkeypatch):
-    # Live mode with the bladeRF backend: inject a fake capture so no hardware is needed.
+    # Verify the acquisition seam routes through the bladeRF backend when cfg.sdr=="bladerf".
+    # A fake backend returns a crafted wide bump (same shape as the HackRF sweep fixture) so the
+    # detector finds one candidate — no hardware, no dependence on DSP window geometry.
     cfg = Config()
     cfg.source = "live"
     cfg.sdr = "bladerf"
     cfg.state_path = str(tmp_path / "scan.json")
     cfg.bands = {"5.8G": (5645.0, 5945.0)}
-    cfg.bladerf_sample_rate_hz = 40_000_000.0
-    cfg.bladerf_window_mhz = 30.0
-    cfg.bladerf_sweep_samples = 8192
 
-    from bladerf_source import BladerfBackend
+    from models import Spectrum
 
-    def fake_capture(center_hz, sample_rate_hz, num_samples):
-        t = np.arange(num_samples) / sample_rate_hz
-        near = abs(center_hz - 5_800_000_000.0) <= (sample_rate_hz / 2.0)
-        amp = 1.0 if near else 0.001
-        return (amp * np.exp(2j * np.pi * 2.0e6 * t)).astype(np.complex64)
+    class _FakeBackend:
+        def __init__(self):
+            self.swept = []
+            self.dwelled = []
 
-    backend = BladerfBackend(cfg.bladerf_sample_rate_hz, cfg.bladerf_window_mhz,
-                             cfg.bladerf_sweep_samples, capture=fake_capture)
-    monkeypatch.setattr(main, "_get_bladerf_backend", lambda c: backend)
+        def sweep_band(self, low_mhz, high_mhz, band):
+            self.swept.append((low_mhz, high_mhz, band))
+            freqs = np.arange(5645.0, 5945.0, 1.0)                              # 1 MHz bins
+            power = np.where((freqs >= 5789) & (freqs <= 5811), -50.0, -90.0)   # 22 MHz bump @ 5800
+            return Spectrum(band=band, freqs_mhz=freqs, power_dbm=power)
+
+        def dwell(self, center_mhz, sample_rate_hz, num_samples):
+            self.dwelled.append((center_mhz, sample_rate_hz, num_samples))
+            t = np.arange(num_samples) / sample_rate_hz
+            return np.exp(2j * np.pi * 1.0e6 * t).astype(np.complex64)
+
+    be = _FakeBackend()
+    monkeypatch.setattr(main, "_get_bladerf_backend", lambda c: be)
 
     payload = main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub())
 
+    assert be.swept == [(5645.0, 5945.0, "5.8G")]                 # seam used the bladeRF backend's sweep
+    assert len(be.dwelled) >= 1                                   # and its dwell for the candidate IQ
     assert payload["occupancy"]["5.8G"] > 0.0
-    assert len(payload["detections"]) >= 1
-    assert abs(payload["detections"][0]["center_mhz"] - 5802.0) < 2.0
+    assert len(payload["detections"]) == 1
+    assert abs(payload["detections"][0]["center_mhz"] - 5800.0) < 2.0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
