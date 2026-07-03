@@ -9,6 +9,7 @@ import { renderConfig } from '../lib/render-config.js';
 import { buildRtspPush, buildSrtPush } from '../lib/push-command.js';
 import { fetchPaths } from '../lib/mtx-api.js';
 import { DetectionJournal } from '../lib/detection-journal.js';
+import { FrameArchive } from '../lib/frame-archive.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -226,28 +227,39 @@ export async function start() {
     max: Number(env.DETECTIONS_MAX || 2000),
   });
   config.journal = journal;
+  const frames = new FrameArchive({
+    dir: env.FRAMES_DIR || join(dirname(mediamtxConfig), 'frames'),
+    indexFile: env.FRAMES_INDEX_FILE || join(dirname(mediamtxConfig), 'frames-index.json'),
+    max: Number(env.FRAMES_MAX || 20000),
+  });
+  config.frames = frames;
+  const framesMaxAgeMs = Number(env.FRAMES_RETENTION_DAYS || 7) * 24 * 60 * 60 * 1000;
+  frames.prune(Date.now(), framesMaxAgeMs);               // catch up after downtime
+  setInterval(() => frames.prune(Date.now(), framesMaxAgeMs), 30 * 60 * 1000).unref();
   try {
     const mqtt = (await import('mqtt')).default;
     const client = mqtt.connect(env.MQTT_TCP_URL || 'mqtt://127.0.0.1:1883', {
       username: config.mqtt.user, password: config.mqtt.pass, reconnectPeriod: 5000,
     });
     let lastWarn = 0;
-    client.on('connect', () => client.subscribe('fpv/+/detection'));
+    client.on('connect', () => client.subscribe(['fpv/+/detection', 'fpv/+/video']));
     client.on('message', (topic, buf) => {
-      const m = /^fpv\/([^/]+)\/detection$/.exec(topic);
+      const m = /^fpv\/([^/]+)\/(detection|video)$/.exec(topic);
       if (!m) return;
       let payload;
       try { payload = JSON.parse(buf.toString()); } catch { return; }
       try {
-        journal.ingest(m[1], payload);            // never crash the server on a bad message
+        // never crash the server on a bad message
+        if (m[2] === 'detection') journal.ingest(m[1], payload);
+        else frames.ingest(m[1], payload);
       } catch (e) {
         const now = Date.now();
-        if (now - lastWarn > 60000) { lastWarn = now; console.warn('journal ingest error:', e.message); }
+        if (now - lastWarn > 60000) { lastWarn = now; console.warn(`${m[2]} ingest error:`, e.message); }
       }
     });
-    client.on('error', (e) => console.error('journal mqtt error:', e.message));
+    client.on('error', (e) => console.error('scan mqtt error:', e.message));
   } catch (e) {
-    console.error('journal MQTT init failed; serving without live journal:', e.message);
+    console.error('scan MQTT init failed; serving without live journal/frames:', e.message);
   }
   const app = createApp({ registry, getPaths: () => fetchPaths(apiBase), config });
   const host = env.DASH_HOST || '10.8.0.1';
