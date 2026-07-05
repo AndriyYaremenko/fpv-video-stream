@@ -20,6 +20,7 @@ class VideoEmitter:
         self.vcfg = vcfg
         self.cooldown_s = cooldown_s
         self._last = {}              # round(center_mhz, 1) -> last attempt ts
+        self.last_frame_path = None  # full-res PNG path of the most recent published frame
 
     def maybe_emit(self, iq, fs, center_mhz, now_ts):
         key = round(center_mhz, 1)
@@ -36,9 +37,11 @@ class VideoEmitter:
             return "not_video"
         if vf.luma is None:
             return "no_lines"
+        self.last_frame_path = None
+        path = os.path.join(self.vcfg.frames_dir, f"{int(now_ts)}_{int(round(center_mhz))}.png")
         try:
-            path = os.path.join(self.vcfg.frames_dir, f"{int(now_ts)}_{int(round(center_mhz))}.png")
             save_full_png(vf.luma, path)
+            self.last_frame_path = path
         except Exception:
             LOG.exception("video frame save failed for %.1f MHz", center_mhz)
         try:
@@ -49,6 +52,6 @@ class VideoEmitter:
         except Exception:
             LOG.exception("video publish failed for %.1f MHz", center_mhz)
             return "error"
-        LOG.info("video status=published center_mhz=%.1f standard=%s sync_snr_db=%.1f",
-                 center_mhz, vf.standard, vf.sync_snr_db)
+        LOG.info("video published center_mhz=%.1f standard=%s sync_snr_db=%.1f frame=%s",
+                 center_mhz, vf.standard, vf.sync_snr_db, self.last_frame_path)
         return "published"
