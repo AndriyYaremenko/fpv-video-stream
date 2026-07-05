@@ -123,3 +123,20 @@ test('count cap evicts the oldest entry and its file', () => {
   assert.deepEqual(a.list().map((f) => f.ts), [300, 200]);
   assert.ok(!existsSync(join(dir, 'hackrf', '100000_5865.png')));
 });
+
+test('list: until/before/fmin/fmax/snrMin/standard filters + combos', () => {
+  const dir = tmp();
+  const a = new FrameArchive({ dir, indexFile: join(dir, 'i.json') });
+  a.ingest('hackrf', payload(100, 949, { standard: 'PAL', sync_snr_db: 26 }));
+  a.ingest('hackrf', payload(200, 5865, { standard: 'NTSC', sync_snr_db: 9 }));
+  a.ingest('hackrf', payload(300, 5745, { standard: 'PAL', sync_snr_db: null }));
+  assert.deepEqual(a.list({ until: 200 }).map((f) => f.ts), [200, 100]);        // inclusive
+  assert.deepEqual(a.list({ before: 200 }).map((f) => f.ts), [100]);            // strict cursor
+  assert.deepEqual(a.list({ since: 100, until: 250 }).map((f) => f.ts), [200]);
+  assert.deepEqual(a.list({ fmin: 5000, fmax: 6100 }).map((f) => f.ts), [300, 200]);
+  assert.deepEqual(a.list({ fmax: 1000 }).map((f) => f.ts), [100]);
+  assert.deepEqual(a.list({ snrMin: 10 }).map((f) => f.ts), [100]);             // 9 < 10; null excluded
+  assert.deepEqual(a.list({ standard: 'pal' }).map((f) => f.ts), [300, 100]);   // case-insensitive
+  assert.deepEqual(a.list({ fmin: 5000, standard: 'PAL' }).map((f) => f.ts), [300]); // combo
+  assert.equal(a.list({}).length, 3);                                           // all unset = everything
+});
