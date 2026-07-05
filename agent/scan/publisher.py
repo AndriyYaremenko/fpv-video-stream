@@ -51,7 +51,9 @@ class MqttPublisher:
         self._t_video = f"fpv/{scanner_id}/video"
         self._t_rxtune = f"fpv/{scanner_id}/rxtune"
         self._t_rxcmd = f"fpv/{scanner_id}/rxcmd"
+        self._t_view = f"fpv/{scanner_id}/view"
         self.on_command = None          # set by the caller: fn(mode, channel)
+        self.on_view_command = None     # set by the caller: fn(dict) — SDR view start/stop
         self._client = None
 
     def connect(self, ts):
@@ -88,7 +90,16 @@ class MqttPublisher:
             data = json.loads(msg.payload)
         except Exception:
             return
-        if not isinstance(data, dict) or self.on_command is None:
+        if not isinstance(data, dict):
+            return
+        if "view" in data:              # SDR view command — never routed to the RX5808 handler
+            if self.on_view_command is not None:
+                try:
+                    self.on_view_command(data)
+                except Exception:
+                    LOG.exception("on_view_command handler failed")
+            return
+        if self.on_command is None:
             return
         try:
             self.on_command(data.get("mode"), data.get("channel"))
@@ -122,6 +133,14 @@ class MqttPublisher:
             self._t_rxtune,
             {"scanner_id": self.scanner_id, "ts": ts, "freq_mhz": freq_mhz,
              "channel": channel, "mode": mode, "targets": targets},
+            self.QOS_DETECTION,
+        )
+
+    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None):
+        self._publish(
+            self._t_view,
+            {"scanner_id": self.scanner_id, "ts": ts, "active": bool(active),
+             "freq_mhz": freq_mhz, "until_ts": until_ts, "error": error},
             self.QOS_DETECTION,
         )
 
