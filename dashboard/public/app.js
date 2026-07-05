@@ -4,7 +4,7 @@ import { splitByKind, renderSpectrum, classColor, fmtFreq } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
-import { galleryHtml } from '/frames-gallery.js';
+import { galleryHtml, buildFramesQuery, toLocalDatetime } from '/frames-gallery.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
@@ -123,12 +123,23 @@ formModal.addEventListener('click', (e) => {
   if (e.target.closest('#frames-refresh')) openFrames();
   const frTile = e.target.closest('.fr-tile');
   if (frTile) openImageModal(frTile.dataset.src, frTile.dataset.cap);
+  if (e.target.closest('#frames-more')) fetchFrames({ append: true });
+  const tp = e.target.closest('[data-tp]');
+  if (tp) {
+    const hours = { '1h': 1, '24h': 24, '7d': 168 }[tp.dataset.tp];
+    framesFilter.from = hours ? toLocalDatetime(Date.now() - hours * 3600e3) : '';
+    framesFilter.to = '';
+    fetchFrames();
+  }
 });
 
-// Frames-gallery scanner filter -> re-render the modal from the cached list.
+// Frames-gallery filters: any change updates the state and re-fetches from the server.
 formModal.addEventListener('change', (e) => {
-  const sel = e.target.closest('#frames-scanner');
-  if (sel) showModal(galleryHtml(framesCache, sel.value));
+  const key = {
+    'frames-scanner': 'scanner', 'frames-band': 'band', 'frames-standard': 'standard',
+    'frames-snr': 'snrMin', 'frames-from': 'from', 'frames-to': 'to',
+  }[e.target.id];
+  if (key) { framesFilter[key] = e.target.value; fetchFrames(); }
 });
 
 async function copyText(text, btn) {
@@ -497,15 +508,31 @@ async function openJournal() {
 }
 
 // ---- frames gallery (server archive of demodulated frames) ----
-let framesCache = [];
-async function openFrames() {
-  framesCache = [];
+// Filter state survives modal close/open; resets on page reload. The server
+// does all filtering — every change re-fetches; «Ще» appends older frames.
+const FRAMES_LIMIT = 200;
+let framesFilter = { scanner: '', band: '', standard: '', snrMin: '', from: '', to: '' };
+let framesList = [];
+let framesHasMore = false;
+
+async function fetchFrames({ append = false } = {}) {
+  const extra = { limit: FRAMES_LIMIT };
+  if (append && framesList.length) extra.before = framesList[framesList.length - 1].ts;
+  let batch = [];
   try {
-    const res = await fetch('/api/frames?limit=200');
-    if (res.ok) framesCache = await res.json();
-  } catch { /* show empty on failure */ }
-  showModal(galleryHtml(framesCache));
+    const res = await fetch(`/api/frames?${buildFramesQuery(framesFilter, extra)}`);
+    if (res.ok) batch = await res.json();
+  } catch { /* render what we have */ }
+  framesList = append ? framesList.concat(batch) : batch;
+  framesHasMore = batch.length === FRAMES_LIMIT;
+  showModal(galleryHtml(framesList, {
+    filter: framesFilter,
+    scanners: scannersFromRegistry.map((s) => s.id),
+    hasMore: framesHasMore,
+  }));
 }
+
+function openFrames() { fetchFrames(); }
 
 // ---- live updates ----
 function connectSSE() {
