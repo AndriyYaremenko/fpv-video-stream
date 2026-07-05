@@ -12,9 +12,16 @@ export function buildCommand(mode, channel) {
   return { mode, channel: channel || null };
 }
 
+// Build an SDR view command for fpv/<id>/rxcmd ({view:'start',freq_mhz} | {view:'stop'}).
+export function buildViewCommand(action, freqMhz) {
+  const cmd = { view: action === 'stop' ? 'stop' : 'start' };
+  if (cmd.view === 'start') cmd.freq_mhz = Number(freqMhz);
+  return cmd;
+}
+
 function ensure(store, id) {
   if (!store[id]) {
-    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, bands: {}, latestPsd: {}, waterfalls: {} };
+    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, bands: {}, latestPsd: {}, waterfalls: {} };
   }
   return store[id];
 }
@@ -23,7 +30,7 @@ function ensure(store, id) {
 // payload may be a JSON string or an already-parsed object. Pure + safe on bad input.
 export function reduce(store, topic, payload, opts = {}) {
   const depth = opts.depth || DEFAULT_DEPTH;
-  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune)$/.exec(topic || '');
+  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view)$/.exec(topic || '');
   if (!m) return store;
   const [, id, kind] = m;
   let data;
@@ -51,6 +58,14 @@ export function reduce(store, topic, payload, opts = {}) {
       channel: data.channel,
       mode: data.mode,
       targets: data.targets || [],
+    };
+  } else if (kind === 'view') {
+    s.view = {
+      ts: data.ts || 0,
+      active: !!data.active,
+      freq_mhz: data.freq_mhz == null ? null : Number(data.freq_mhz),
+      until_ts: data.until_ts == null ? null : Number(data.until_ts),
+      error: data.error || null,
     };
   } else if (kind === 'spectrum') {
     for (const b of (data.bands || [])) {
@@ -80,7 +95,7 @@ export class MqttScanClient {
     const client = window.mqtt.connect(url, { username: user, password: pass, reconnectPeriod: 4000 });
     let raf = 0;
     const notify = () => { raf = 0; onChange(this.store); };
-    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune']));
+    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view']));
     client.on('message', (topic, buf) => {
       try { reduce(this.store, topic, buf.toString(), { depth: this.depth }); } catch { return; }
       if (!raf) raf = requestAnimationFrame(notify);
@@ -94,6 +109,17 @@ export class MqttScanClient {
     this.client.publish(
       `fpv/${id}/rxcmd`, JSON.stringify(buildCommand(cmd.mode, cmd.channel)),
       { qos: 1, retain: true },
+    );
+  }
+
+  // SDR view command — same rxcmd topic (ACL already allows it), but NOT retained:
+  // a retained start would replay and re-enter view mode on every Pi reconnect.
+  publishView(id, action, freqMhz) {
+    if (!this.client || !id) return;
+    if (action === 'start' && !Number.isFinite(Number(freqMhz))) return;
+    this.client.publish(
+      `fpv/${id}/rxcmd`, JSON.stringify(buildViewCommand(action, freqMhz)),
+      { qos: 1, retain: false },
     );
   }
 }
