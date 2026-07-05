@@ -77,6 +77,12 @@ export function createApp({ registry, getPaths, config }) {
     res.json(config.frames.list({
       scanner: String(req.query.scanner || ''),
       since: Number(req.query.since) || 0,
+      until: Number(req.query.until) || 0,
+      before: Number(req.query.before) || 0,
+      fmin: Number(req.query.fmin) || 0,
+      fmax: Number(req.query.fmax) || 0,
+      snrMin: Number(req.query.snr_min) || 0,
+      standard: String(req.query.standard || ''),
       limit,
     }));
   });
