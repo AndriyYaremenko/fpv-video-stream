@@ -1,0 +1,188 @@
+"""Continuous IQ -> grayscale frames for the SDR live-view stream.
+
+Pure pieces (unit-tested): command builders, standard pick with PAL fallback,
+row resize, chunk->frames. The subprocess pipeline (run_stream) is added on top
+and kept as thin as possible."""
+import logging
+
+import numpy as np
+
+from demod import fm_demod, lowpass
+from standard import detect_standard
+from frame import reconstruct_frames
+from render import normalize_luma
+
+LOG = logging.getLogger("video.stream")
+
+VIEW_HEIGHT = {"PAL": 288, "NTSC": 240}
+
+
+def build_capture_cmd(freq_hz, sample_rate_hz, lna=40, vga=20, amp=0):
+    """hackrf_transfer argv streaming int8 IQ to stdout (no -n: runs until killed)."""
+    return ["hackrf_transfer", "-r", "-", "-f", str(int(freq_hz)),
+            "-s", str(int(sample_rate_hz)),
+            "-l", str(int(lna)), "-g", str(int(vga)), "-a", str(int(amp))]
+
+
+def build_encode_cmd(push_url, width, height, fps):
+    """ffmpeg argv: raw gray frames on stdin -> low-latency H.264 RTSP push."""
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{width}x{height}",
+            "-r", str(fps), "-i", "-",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p", "-f", "rtsp", "-rtsp_transport", "tcp", push_url]
+
+
+def pick_standard(baseband, fs, forced="auto", line_snr_db=10.0, harm_snr_db=6.0):
+    """'pal'/'ntsc' forced -> that standard; otherwise detect, falling back to
+    PAL so the stream still shows *something* on pure noise."""
+    if forced in ("pal", "ntsc"):
+        return forced.upper()
+    res = detect_standard(baseband, fs, line_snr_db=line_snr_db, harm_snr_db=harm_snr_db)
+    return res.standard or "PAL"
+
+
+def resize_rows(img, height):
+    """Nearest-row resample of a (rows, w) image to (height, w)."""
+    if img.shape[0] == 0:
+        return np.zeros((height, img.shape[1]), dtype=img.dtype)
+    idx = np.clip(np.round(np.linspace(0, img.shape[0] - 1, height)).astype(int),
+                  0, img.shape[0] - 1)
+    return img[idx, :]
+
+
+def chunk_to_frames(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18):
+    """One IQ chunk -> list of fixed-size uint8 gray frames (height x width)."""
+    bb = lowpass(fm_demod(iq), fs, lpf_cutoff_hz)
+    out = []
+    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac):
+        if fr.size == 0:
+            continue
+        out.append(resize_rows(normalize_luma(fr), height))
+    return out
+
+
+import subprocess
+import threading
+import time
+
+from dweller import iq_from_int8            # agent/scan flat module (shared sys.path)
+
+CHUNK_S = 0.5
+
+
+def select_frames(frames, chunk_s, fps):
+    """Even subsample so one chunk emits at most chunk_s*fps frames (pacing budget)."""
+    want = max(1, int(round(chunk_s * fps)))
+    if len(frames) <= want:
+        return list(frames)
+    idx = np.round(np.linspace(0, len(frames) - 1, want)).astype(int)
+    return [frames[i] for i in idx]
+
+
+class FramePacer:
+    """Writes frames at a fixed fps so ffmpeg's rawvideo timeline stays real-time."""
+
+    def __init__(self, fps, write, clock=None, sleep=None):
+        self._period = 1.0 / fps
+        self._write = write
+        self._clock = clock or time.monotonic
+        self._sleep = sleep or time.sleep
+        self._next = None
+
+    def tick(self, frame_bytes):
+        now = self._clock()
+        if self._next is None:
+            self._next = now
+        if self._next > now:
+            self._sleep(self._next - now)
+        self._write(frame_bytes)
+        self._next = max(self._next + self._period, self._clock() - self._period)
+
+
+def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
+               popen=None, clock=None, sleep=None):
+    """Blocking capture->demod->encode loop for one view session.
+
+    Returns None on clean stop/timeout, or an error string when a subprocess
+    died. Always kills both subprocesses before returning. A dedicated reader
+    thread drains hackrf stdout into a single-slot mailbox (dropping backlog)
+    so the USB stream never stalls on a full pipe.
+    """
+    popen = popen or subprocess.Popen
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
+    fs = vcfg.view_sample_rate_hz
+    chunk_bytes = int(fs * 2 * CHUNK_S)
+    cap = popen(build_capture_cmd(freq_mhz * 1e6, fs, lna, vga, amp),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=chunk_bytes)
+    enc = None
+    pacer = None
+    standard = None
+    height = None
+    error = None
+    mailbox = {}
+    lock = threading.Lock()
+
+    def _reader():
+        while not stop_event.is_set():
+            try:
+                buf = cap.stdout.read(chunk_bytes)
+            except Exception:
+                return
+            if not buf or len(buf) < chunk_bytes:
+                return                                   # EOF: capture died
+            with lock:
+                mailbox["chunk"] = buf                   # drop any unconsumed chunk
+
+    threading.Thread(target=_reader, daemon=True).start()
+    t_end = clock() + max_s
+    try:
+        while not stop_event.is_set() and clock() < t_end:
+            with lock:
+                buf = mailbox.pop("chunk", None)
+            if buf is None:
+                if cap.poll() is not None:
+                    error = "hackrf_transfer exited"
+                    break
+                sleep(0.05)
+                continue
+            iq = iq_from_int8(buf)
+            if standard is None:
+                bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
+                standard = pick_standard(bb, fs, vcfg.view_standard,
+                                         vcfg.line_snr_db, vcfg.harm_snr_db)
+                height = VIEW_HEIGHT[standard]
+                enc = popen(build_encode_cmd(vcfg.view_push_url, vcfg.view_width,
+                                             height, vcfg.view_fps),
+                            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                pacer = FramePacer(vcfg.view_fps, enc.stdin.write, clock=clock, sleep=sleep)
+                LOG.info("view stream: %s %dx%d @%.0ffps", standard, vcfg.view_width,
+                         height, vcfg.view_fps)
+            frames = select_frames(
+                chunk_to_frames(iq, fs, standard, vcfg.view_width, height,
+                                vcfg.lpf_cutoff_hz, vcfg.blank_frac),
+                CHUNK_S, vcfg.view_fps)
+            for fr in frames:
+                if stop_event.is_set() or clock() >= t_end:
+                    break
+                try:
+                    pacer.tick(fr.tobytes())
+                except (BrokenPipeError, OSError):
+                    error = "ffmpeg pipe closed"
+                    break
+            if error:
+                break
+            if enc is not None and enc.poll() is not None:
+                error = "ffmpeg exited"
+                break
+    finally:
+        for proc in (cap, enc):
+            if proc is None:
+                continue
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+    return error

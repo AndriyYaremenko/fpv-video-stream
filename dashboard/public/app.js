@@ -26,16 +26,39 @@ spectrumPanel.addEventListener('click', (e) => {
     scanClient.publishCommand(sid, { mode: modeBtn.dataset.rxmode });
     return;
   }
-  // Click the 5.8 spectrum -> tune the nearest channel (manual)
-  const canvas = e.target.closest('canvas.tunable');
+  // Click a spectrum chart -> fill the SDR view frequency field; on 5.8G also
+  // tune the RX5808 to the nearest channel (previous behavior kept).
+  const canvas = e.target.closest('canvas.freqpick');
   if (canvas && sid) {
     const rect = canvas.getBoundingClientRect();
     const lo = Number(canvas.dataset.lowMhz);
     const hi = Number(canvas.dataset.highMhz);
     const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
     const freq = lo + (x / rect.width) * (hi - lo);
-    const ch = nearestRxChannel(freq);
-    if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
+    const inp = scanBlock.querySelector('.view-freq');
+    if (inp) inp.value = String(Math.round(freq));
+    if (canvas.classList.contains('tunable')) {
+      const ch = nearestRxChannel(freq);
+      if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
+    }
+    return;
+  }
+  // SDR view start/stop buttons
+  const vbtn = e.target.closest('[data-viewact]');
+  if (vbtn && sid) {
+    if (vbtn.dataset.viewact === 'stop') {
+      scanClient.publishView(sid, 'stop');
+    } else {
+      const inp = scanBlock.querySelector('.view-freq');
+      const f = Number(inp && inp.value);
+      if (Number.isFinite(f) && f >= 100 && f <= 6000) scanClient.publishView(sid, 'start', f);
+    }
+    return;
+  }
+  // ▶ on a detection row -> start the SDR view at that frequency
+  const vfreq = e.target.closest('[data-viewfreq]');
+  if (vfreq && sid) {
+    scanClient.publishView(sid, 'start', Number(vfreq.dataset.viewfreq));
     return;
   }
 
@@ -258,7 +281,17 @@ function renderScan() {
   if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
   prevScanKeys = Object.keys(store).length ? keys : null;
   spectrumPanel.classList.remove('hidden');
+  // Preserve typed SDR-view frequencies across the full panel re-render.
+  const typed = {};
+  for (const inp of spectrumPanel.querySelectorAll('[data-scanner-id] .view-freq')) {
+    const b = inp.closest('[data-scanner-id]');
+    if (b && inp.value) typed[b.dataset.scannerId] = inp.value;
+  }
   renderSpectrum(spectrumPanel, scanners, store, new Set(newKeys));
+  for (const [vid, val] of Object.entries(typed)) {
+    const inp = spectrumPanel.querySelector(`[data-scanner-id="${vid}"] .view-freq`);
+    if (inp && !inp.value) inp.value = val;
+  }
 }
 
 async function startPlayer(d) {

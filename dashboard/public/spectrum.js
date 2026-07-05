@@ -50,6 +50,14 @@ export function rxtuneCaption(rx) {
   return `RX5808 → ${fmtFreq(rx.freq_mhz)}${ch}${mode}`;
 }
 
+// Caption for the live SDR view badge: "▶ 5865 МГц до 18:45".
+export function viewCaption(view) {
+  if (!view || !view.active) return '';
+  const until = view.until_ts
+    ? ` до ${new Date(view.until_ts * 1000).toTimeString().slice(0, 5)}` : '';
+  return `▶ ${fmtFreq(view.freq_mhz)}${until}`;
+}
+
 // Map a PSD array (dBm) to polyline points in a w×h box. Higher power = higher on screen (smaller y).
 export function psdToPoints(psd, width, height, dbMin = -100, dbMax = -20) {
   const n = psd.length;
@@ -143,6 +151,7 @@ function scannerBlock(s, live, highlightKeys) {
     block.appendChild(el('div', 'scan-rxtune', escapeHtml(rxtuneCaption(live.rxtune))));
   }
   block.appendChild(rx5808Controls(live && live.rxtune ? live.rxtune.mode : null));
+  block.appendChild(viewControls(live && live.view));
 
   // 3 bands in a row: each = live PSD line + scrolling waterfall
   const charts = el('div', 'scan-charts');
@@ -178,6 +187,18 @@ function rx5808Controls(activeMode) {
   return row;
 }
 
+// SDR live-view controls: frequency field + start/stop + live badge.
+function viewControls(view) {
+  const active = !!(view && view.active);
+  return el('div', 'sdr-view-ctl', `
+    <span class="view-label">📺 SDR</span>
+    <input class="view-freq" type="number" min="100" max="6000" step="1" placeholder="МГц" />
+    <button data-viewact="start">▶ дивитись</button>
+    <button data-viewact="stop"${active ? '' : ' disabled'}>■ свіп</button>
+    <span class="view-badge">${escapeHtml(viewCaption(view))}</span>
+    ${view && view.error ? `<span class="view-err">${escapeHtml(view.error)}</span>` : ''}`);
+}
+
 function bandCell(band, range, psd, frames, dets, rxFreq, tunable) {
   const wrap = el('div', 'band-cell');
   wrap.appendChild(el('div', 'band-label', escapeHtml(band)));
@@ -187,10 +208,11 @@ function bandCell(band, range, psd, frames, dets, rxFreq, tunable) {
   const lh = 44;
   const line = document.createElement('canvas');
   line.width = w; line.height = lh; line.className = 'chart-line';
-  if (tunable && range.low_mhz != null) {
-    line.classList.add('tunable');                 // click maps x -> freq -> nearest RX5808 channel
+  if (range.low_mhz != null) {
     line.dataset.lowMhz = range.low_mhz;
     line.dataset.highMhz = range.high_mhz;
+    line.classList.add('freqpick');                // click -> fill the SDR view field
+    if (tunable) line.classList.add('tunable');    // 5.8G: click also tunes the RX5808
   }
   const lc = line.getContext('2d');
   const pts = psdToPoints(psd, w, lh);
@@ -250,7 +272,7 @@ function detectionTable(dets, highlightKeys = new Set()) {
     const tr = el('tr', isNew ? 'is-new' : null);
     const freq = `${fmtFreq(d.center_mhz)}${d.channel ? ` (${escapeHtml(d.channel)})` : ''}`;
     tr.innerHTML = `
-      <td>${isNew ? '⚠' : ''}</td>
+      <td>${isNew ? '⚠' : ''}<button class="tile-btn" data-viewfreq="${Number(d.center_mhz)}" title="Дивитись цю частоту (SDR)">▶</button></td>
       <td>${escapeHtml(d.band)}</td>
       <td>${freq}</td>
       <td><span class="cls" style="color:${classColor(d.class)}">${escapeHtml(d.class)}</span></td>

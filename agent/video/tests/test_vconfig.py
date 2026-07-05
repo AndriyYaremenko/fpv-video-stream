@@ -37,3 +37,24 @@ def test_video_emit_env_overrides():
     c = load_video_config(env={"FPV_VIDEO_ENABLED": "0", "FPV_EMIT_COOLDOWN_S": "30"})
     assert c.video_enabled is False
     assert c.emit_cooldown_s == 30.0
+
+
+def test_view_defaults():
+    from vconfig import load_video_config
+    c = load_video_config(env={})
+    assert c.view_enabled is False and c.view_push_url == ""
+    assert c.view_sample_rate_hz == 8_000_000.0 and c.view_max_s == 600.0
+    assert c.view_width == 480 and c.view_fps == 15.0 and c.view_standard == "auto"
+
+
+def test_view_env_overrides():
+    from vconfig import load_video_config
+    c = load_video_config(env={
+        "VIEW_ENABLED": "1", "VIEW_PUSH_URL": "rtsp://u:p@10.8.0.1:8554/hackrf-view",
+        "VIEW_SAMPLE_RATE_HZ": "10000000", "VIEW_MAX_S": "300",
+        "VIEW_WIDTH": "360", "VIEW_FPS": "10", "VIEW_STANDARD": "PAL",
+    })
+    assert c.view_enabled is True and c.view_push_url.endswith("/hackrf-view")
+    assert c.view_sample_rate_hz == 10_000_000.0 and c.view_max_s == 300.0
+    assert c.view_width == 360 and c.view_fps == 10.0
+    assert c.view_standard == "pal"                     # normalized to lowercase
