@@ -20,21 +20,29 @@ test('frameCaption: time, MHz, scanner, SNR; SNR omitted when null', () => {
   assert.ok(!frameCaption(fr({ sync_snr_db: null })).includes('sync'));
 });
 
-test('galleryHtml: tiles with data-src/data-cap, lazy img, refresh + select', () => {
-  const html = galleryHtml([fr()]);
+test('galleryHtml: toolbar reflects the filter, tiles render all given frames', () => {
+  const frames = [fr(), fr({ scanner_id: 'bladerf', url: '/api/frames/bladerf/1_1.png' })];
+  const html = galleryHtml(frames, {
+    filter: { scanner: 'bladerf', band: '5.8', standard: 'PAL', snrMin: '12', from: '2026-07-05T10:30', to: '' },
+    scanners: ['rx-pi'],
+  });
   assert.match(html, /id="frames-refresh"/);
-  assert.match(html, /<select id="frames-scanner">/);
-  assert.match(html, /class="fr-tile" data-src="\/api\/frames\/hackrf\/1751500000000_5865\.png"/);
+  assert.match(html, /<option value="bladerf" selected>/);
+  assert.match(html, /<option value="rx-pi">/);                       // registry id present
+  assert.match(html, /<option value="5.8" selected>/);                // band
+  assert.match(html, /<option value="PAL" selected>/);                // standard
+  assert.match(html, /id="frames-snr"[^>]*value="12"/);
+  assert.match(html, /id="frames-from"[^>]*value="2026-07-05T10:30"/);
+  assert.match(html, /data-tp="24h"/);
+  assert.ok(html.includes('/api/frames/hackrf/'));                    // NO client-side tile filtering
+  assert.ok(html.includes('/api/frames/bladerf/'));
   assert.match(html, /<img loading="lazy" src="\/api\/frames\/hackrf\/1751500000000_5865\.png"/);
-  assert.match(html, /5865 МГц/);
 });
 
-test('galleryHtml: scanner filter narrows tiles, select keeps all + selected', () => {
-  const frames = [fr(), fr({ scanner_id: 'bladerf', url: '/api/frames/bladerf/1_1.png' })];
-  const html = galleryHtml(frames, 'bladerf');
-  assert.ok(!html.includes('/api/frames/hackrf/'));           // hackrf tile filtered out
-  assert.match(html, /<option value="hackrf">/);              // ...but still selectable
-  assert.match(html, /<option value="bladerf" selected>/);
+test('galleryHtml: «Показати ще» only when hasMore', () => {
+  assert.match(galleryHtml([fr()], { hasMore: true }), /id="frames-more"/);
+  assert.ok(!galleryHtml([fr()], { hasMore: false }).includes('frames-more'));
+  assert.ok(!galleryHtml([fr()]).includes('frames-more'));
 });
 
 test('galleryHtml: empty state + html escaping', () => {

@@ -19,26 +19,50 @@ export function frameCaption(f) {
   return parts.join(' · ');
 }
 
-// Full modal body. `scanner` filters the tiles; the select always lists every
-// scanner present in `frames` so the operator can switch back to "всі".
-export function galleryHtml(frames, scanner = '') {
+// Full modal body: header, two-row filter toolbar, tile grid, optional «Ще».
+// The server does ALL filtering — this renders every frame it is given; the
+// toolbar only reflects `filter` back so the controls keep their state.
+export function galleryHtml(frames, { filter = {}, scanners = [], hasMore = false } = {}) {
   const all = frames || [];
-  const shown = scanner ? all.filter((f) => f.scanner_id === scanner) : all;
-  const opts = ['<option value="">всі сканери</option>']
-    .concat(scannerIds(all).map((id) =>
-      `<option value="${escapeHtml(id)}"${id === scanner ? ' selected' : ''}>${escapeHtml(id)}</option>`))
+  const opt = (value, label, selected) =>
+    `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  const scanOpts = [opt('', 'всі сканери', !filter.scanner)]
+    .concat(scannerOptions(all, scanners, filter.scanner || '').map((id) => opt(id, id, id === filter.scanner)))
     .join('');
-  const tiles = shown.map((f) => {
+  const bandOpts = [opt('', 'всі бенди', !filter.band)]
+    .concat(Object.entries(BAND_PRESETS).map(([k, b]) => opt(k, b.label, k === filter.band)))
+    .join('');
+  const stdOpts = [opt('', 'всі стандарти', !filter.standard)]
+    .concat(['PAL', 'NTSC'].map((s) => opt(s, s, s === filter.standard)))
+    .join('');
+  const presets = [['1h', '1 год'], ['24h', '24 год'], ['7d', '7 д'], ['all', 'все']]
+    .map(([k, label]) => `<button type="button" class="btn-ghost" data-tp="${k}">${label}</button>`)
+    .join('');
+  const tiles = all.map((f) => {
     const cap = frameCaption(f);
     return `<button type="button" class="fr-tile" data-src="${escapeHtml(f.url)}" data-cap="${escapeHtml(cap)}">
       <img loading="lazy" src="${escapeHtml(f.url)}" alt="кадр" />
       <span class="fr-cap">${escapeHtml(cap)}</span>
     </button>`;
   }).join('');
-  const grid = shown.length ? `<div class="fr-grid">${tiles}</div>` : '<p class="muted">Кадрів немає.</p>';
+  const grid = all.length ? `<div class="fr-grid">${tiles}</div>` : '<p class="muted">Кадрів немає.</p>';
+  const more = hasMore ? '<div class="fr-more"><button type="button" id="frames-more" class="btn-ghost">Показати ще</button></div>' : '';
   return `<h2>🖼️ Кадри <button type="button" id="frames-refresh" class="btn-ghost">оновити</button></h2>
-    <div class="fr-toolbar"><label>Сканер <select id="frames-scanner">${opts}</select></label></div>
+    <div class="fr-filters">
+      <div class="fr-toolbar">
+        <label>Сканер <select id="frames-scanner">${scanOpts}</select></label>
+        <label>Бенд <select id="frames-band">${bandOpts}</select></label>
+        <label>Стандарт <select id="frames-standard">${stdOpts}</select></label>
+        <label>SNR ≥ <input type="number" id="frames-snr" min="0" step="1" value="${escapeHtml(filter.snrMin || '')}" placeholder="dB" /> dB</label>
+      </div>
+      <div class="fr-toolbar">
+        ${presets}
+        <label>від <input type="datetime-local" id="frames-from" value="${escapeHtml(filter.from || '')}" /></label>
+        <label>до <input type="datetime-local" id="frames-to" value="${escapeHtml(filter.to || '')}" /></label>
+      </div>
+    </div>
     ${grid}
+    ${more}
     <div class="form-actions"><button type="button" data-close class="btn-primary">Закрити</button></div>`;
 }
 
