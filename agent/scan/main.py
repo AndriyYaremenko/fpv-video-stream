@@ -161,6 +161,28 @@ def main() -> None:
                      cfg.rx5808_dwell_s, cfg.rx5808_clk, cfg.rx5808_data, cfg.rx5808_le)
     except Exception:
         LOG.exception("rx5808 controller init failed; continuing without it")
+    view = None
+    try:
+        if publisher is not None:
+            import video_emit                    # noqa: F401  (side effect: ../video on sys.path)
+            from vconfig import load_video_config
+            viewcfg = load_video_config()
+            if viewcfg.view_enabled and viewcfg.view_push_url:
+                import stream_demod
+                from view_controller import ViewController
+                view = ViewController(
+                    publisher,
+                    run_stream=lambda freq, stop, max_s: stream_demod.run_stream(
+                        viewcfg, freq, stop, max_s,
+                        lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable),
+                    max_s=viewcfg.view_max_s,
+                    reset=reset_hackrf,
+                )
+                publisher.on_view_command = view.set_command
+                LOG.info("SDR view mode enabled (push=%s max=%.0fs)",
+                         viewcfg.view_push_url.split("@")[-1], viewcfg.view_max_s)
+    except Exception:
+        LOG.exception("view mode init failed; continuing without it")
     if controller is not None and publisher is not None:
         # Apply dashboard commands (fpv/<id>/rxcmd). Wire BEFORE connect so a retained command —
         # delivered when _on_connect subscribes — is dispatched, not dropped while on_command is unset.
@@ -175,6 +197,12 @@ def main() -> None:
     backoff = 1.0
     while True:
         try:
+            req = view.pending() if view is not None else None
+            if req is not None:
+                LOG.info("entering SDR view @ %.1f MHz (sweep paused)", req)
+                view.run_view(req)
+                LOG.info("SDR view ended; sweep resumes")
+                continue
             payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher,
                                 emitter=emitter, controller=controller)
             holder.payload = payload
