@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor, frameCaption, rxtuneCaption } from '../dashboard/public/spectrum.js';
+import { splitByKind, classColor, fmtFreq, fmtPct, psdToPoints, detectionX, psdColor, frameCaption, rxtuneCaption, viewCaption } from '../dashboard/public/spectrum.js';
 
 test('splitByKind separates scanners from cameras (missing kind = camera)', () => {
   const { cameras, scanners } = splitByKind([
@@ -85,4 +85,12 @@ test('rxtuneCaption shows freq, channel, mode', () => {
 
 test('rxtuneCaption is empty for nullish input', () => {
   assert.equal(rxtuneCaption(null), '');
+});
+
+test('viewCaption: active shows freq and until, inactive empty', () => {
+  assert.equal(viewCaption(null), '');
+  assert.equal(viewCaption({ active: false, freq_mhz: 5865 }), '');
+  assert.match(viewCaption({ active: true, freq_mhz: 5865, until_ts: 1783111800 }),
+    /^▶ 5865 МГц до \d{2}:\d{2}$/);
+  assert.equal(viewCaption({ active: true, freq_mhz: 5865 }), '▶ 5865 МГц');
 });

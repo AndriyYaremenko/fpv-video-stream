@@ -134,3 +134,12 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .fr-tile { background:#0c1118; border:1px solid var(--line); border-radius:6px; padding:.35rem; cursor:pointer; display:flex; flex-direction:column; gap:.3rem; text-align:left; }
 .fr-tile img { width:100%; border-radius:4px; background:#000; image-rendering:pixelated; }
 .fr-cap { color:#9aa4b2; font-size:.72rem; line-height:1.25; }
+
+/* SDR live-view controls (scanner block) */
+.sdr-view-ctl { display:flex; gap:.4rem; align-items:center; margin:.3rem 0; font-size:.8rem; color:#cbd5e1; flex-wrap:wrap; }
+.sdr-view-ctl .view-freq { width:5.5rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; font:inherit; padding:.15rem .3rem; }
+.sdr-view-ctl button { font-size:.75rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; cursor:pointer; padding:.15rem .5rem; }
+.sdr-view-ctl button:disabled { opacity:.4; cursor:default; }
+.sdr-view-ctl .view-badge { color:#39d0ff; font-weight:600; }
+.sdr-view-ctl .view-err { color:#f87171; }
+.band-cell .chart-line.freqpick { cursor:crosshair; }
