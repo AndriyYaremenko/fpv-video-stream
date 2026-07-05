@@ -284,3 +284,25 @@ test('frames API without an archive: empty list, 404 file', async () => {
   assert.equal(img.status, 404);
   server.close();
 });
+
+test('GET /api/frames passes filter query params through to list()', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'frq-'));
+  const frames = new FrameArchive({ dir, indexFile: join(dir, 'i.json') });
+  const mk = (ts, mhz, std, snr) => frames.ingest('hackrf', {
+    ts, center_mhz: mhz, standard: std, line_hz: 15625,
+    sync_snr_db: snr, frame_png_b64: FR_PNG.toString('base64'),
+  });
+  mk(100, 949, 'PAL', 26); mk(200, 5865, 'NTSC', 9); mk(300, 5745, 'PAL', 31);
+  const { server, base } = await startWith({ devices: [] }, { ...config, frames });
+  const cookie = await login(base);
+  const get = async (qs) =>
+    (await (await fetch(`${base}/api/frames?${qs}`, { headers: { cookie } })).json()).map((f) => f.ts);
+  assert.deepEqual(await get('fmin=5000&fmax=6100'), [300, 200]);
+  assert.deepEqual(await get('snr_min=10'), [300, 100]);
+  assert.deepEqual(await get('standard=pal'), [300, 100]);
+  assert.deepEqual(await get('until=200'), [200, 100]);
+  assert.deepEqual(await get('before=300'), [200, 100]);
+  assert.deepEqual(await get('since=100&until=250'), [200]);
+  assert.deepEqual(await get('fmin=abc'), [300, 200, 100]);        // NaN → unset
+  server.close();
+});
