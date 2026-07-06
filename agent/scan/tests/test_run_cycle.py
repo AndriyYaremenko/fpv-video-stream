@@ -160,11 +160,9 @@ def test_run_cycle_feeds_rx5808_carriers_regardless_of_class(tmp_path, monkeypat
     assert abs(ctl.targets[0] - 5800.0) < 2.0
 
 
-def test_run_cycle_demods_narrow_5_8_carrier_missed_by_strict_detector(tmp_path):
-    # A narrow FPV video carrier (~3 MHz) passes the looser 5.8 carrier finder but fails the
-    # strict analog-video bandwidth gate (min 5 MHz), so it never becomes a classified
-    # 'analog' detection. The video emitter must still get a demod attempt on it — the real
-    # "is this analog video?" test is extract_frame's line-sync gate, not the sweep width.
+def _write_narrow_fixtures(tmp_path):
+    # A narrow (~3 MHz) carrier @5865: passes the looser carrier finder but fails
+    # the strict analog-video bandwidth gate (min 5 MHz).
     lo = 5645_000000
     bins = []
     for i in range(300):                        # 5645..5945 MHz, 1 MHz bins
@@ -183,17 +181,50 @@ def test_run_cycle_demods_narrow_5_8_carrier_missed_by_strict_detector(tmp_path)
     iq8[1::2] = np.clip(np.imag(tone) * 100, -127, 127).astype(np.int8)
     (tmp_path / "iq_5.8G.bin").write_bytes(iq8.tobytes())
 
+
+class _NotVideoEmitter(_FakeEmitter):
+    def maybe_emit(self, iq, fs, center_mhz, now_ts):
+        self.calls.append((fs, center_mhz, now_ts))
+        return "not_video"
+
+
+def test_run_cycle_demods_narrow_5_8_carrier_missed_by_strict_detector(tmp_path):
+    # The demod attempt happens on the loose carrier, but when the line-sync gate
+    # says "not video" NO detection is fabricated (that's the noise filter).
+    _write_narrow_fixtures(tmp_path)
     cfg = _config(tmp_path)
-    em = _FakeEmitter()
+    em = _NotVideoEmitter()
 
     payload = main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em)
 
-    # the strict detector rejects the narrow carrier -> no analog detection near 5865
     assert not any(d["class"] == "analog" and abs(d["center_mhz"] - 5865) <= 2
                    for d in payload["detections"])
     # ...but the emitter still got a demod attempt on the loose 5.8 carrier near 5865
     assert len(em.calls) >= 1
     assert any(abs(center - 5865) <= 2 for _, center, _ in em.calls)
+
+
+def test_run_cycle_adds_detection_for_demod_confirmed_carrier(tmp_path):
+    # A line-sync-locked demod IS an analog-video detection: narrow carriers the
+    # strict detector misses must reach detections[] (→ MQTT → journal) once the
+    # emitter confirms real video ("published").
+    _write_narrow_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()                            # always returns "published"
+    pub = _FakePub()
+
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=pub, emitter=em)
+
+    dets = [d for d in payload["detections"]
+            if d["class"] == "analog" and abs(d["center_mhz"] - 5865) <= 2]
+    assert len(dets) == 1
+    d = dets[0]
+    assert d["snr_db"] >= 15                       # metrics carried from the loose candidate
+    assert d["bandwidth_mhz"] > 0
+    assert d["channel"]                            # 5865 sits on an RX5808 channel
+    # and the published MQTT payload carries it too (this is what feeds the journal)
+    assert any(abs(pd.center_mhz - 5865) <= 2 and pd.signal_class == "analog"
+               for pd in pub.detections[0][1])
 
 
 def test_run_cycle_logs_each_detection_with_frame_link(tmp_path, monkeypatch, caplog):

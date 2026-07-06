@@ -136,6 +136,20 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                     if emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts) == "published":
                         LOG.info("carrier video band=%s center=%.1fMHz frame=%s",
                                  band, c.center_mhz, emitter.last_frame_path)
+                        # A line-sync-locked demod IS an analog-video detection: surface
+                        # carriers the strict bandwidth gate missed so they reach the
+                        # MQTT detection payload → journal/dashboard/alerts.
+                        detections.append(Detection(
+                            ts=now_ts,
+                            band=band,
+                            center_mhz=c.center_mhz,
+                            bandwidth_mhz=c.bandwidth_mhz,
+                            power_dbm=c.power_dbm,
+                            snr_db=c.snr_db,
+                            signal_class="analog",
+                            confidence=0.9,
+                            channel=nearest_channel(c.center_mhz),
+                        ))
                 except Exception:
                     LOG.exception("carrier video demod failed @ %.1f MHz", c.center_mhz)
 
