@@ -37,16 +37,41 @@ def build_frame(rows, width=720, blank_frac=0.18):
     return active[:, lo] * (1.0 - frac) + active[:, hi] * frac
 
 
+def _align_vsync(rows, win=6):
+    """Roll rows so the vertical-blanking interval (the darkest consecutive row
+    window — broad vsync pulses) sits at the top: without this the field
+    boundary lands wherever the capture chunk started and the picture wraps.
+    No-op when no clearly darker window exists (signals without a visible VBI)."""
+    n = rows.shape[0]
+    if n < win * 3:
+        return rows
+    m = rows.mean(axis=1)
+    ext = np.concatenate([m, m[:win - 1]])                    # circular windows
+    sums = np.convolve(ext, np.ones(win), mode="valid")[:n]
+    k = int(np.argmin(sums))
+    depth = float(np.median(m) - sums[k] / win)
+    spread = float(m.max() - m.min())
+    if spread <= 1e-9 or depth < 0.25 * spread:
+        return rows                                           # no distinct VBI
+    return np.roll(rows, -k, axis=0)
+
+
 def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18):
-    """Slice into lines, chunk into frames of LINES[standard], build each frame."""
+    """Slice into lines, chunk into FIELDS (LINES/2), align each to its vertical
+    sync, build each frame.
+
+    Real CVBS is interlaced: every field is a complete vertical scan of the
+    picture, so stacking a full 2-field frame shows the image TWICE. One field
+    per output frame gives a single copy at half vertical resolution."""
     rows = slice_lines(baseband, fs, standard)
-    lines = LINES[standard]
+    field = LINES[standard] // 2
     frames = []
-    n_frames = rows.shape[0] // lines
+    n_frames = rows.shape[0] // field
     for f in range(n_frames):
-        frames.append(build_frame(rows[f * lines:(f + 1) * lines], width, blank_frac))
-    if not frames:                       # fewer than one full frame of lines
-        frames.append(build_frame(rows, width, blank_frac))
+        frames.append(build_frame(_align_vsync(rows[f * field:(f + 1) * field]),
+                                  width, blank_frac))
+    if not frames:                       # fewer than one full field of lines
+        frames.append(build_frame(_align_vsync(rows), width, blank_frac))
     return frames
 
 

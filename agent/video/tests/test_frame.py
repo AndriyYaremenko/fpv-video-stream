@@ -48,3 +48,35 @@ def test_pick_sharpest_prefers_high_variance():
     sharp = np.random.default_rng(0).random((40, 40))
     assert pick_sharpest([flat, sharp]) is sharp
     assert laplacian_var(sharp) > laplacian_var(flat)
+
+
+def test_interlaced_frames_are_field_sized_single_copy():
+    # Real cameras interlace: each FIELD is a complete vertical scan. Stacking a
+    # full 2-field frame doubles the picture (the reported bug).
+    fs = 8_000_000.0
+    src = _gradient(120, 120)
+    bb = make_cvbs("PAL", src, fs, frames=2, interlaced=True, vbi_lines=8)
+    frames = reconstruct_frames(bb, fs, "PAL", width=120)
+    f = pick_sharpest(frames)
+    assert f.shape[0] == LINES["PAL"] // 2          # one field, not two stacked
+    prof = f.mean(axis=1)
+    prof_i = np.interp(np.linspace(0, 1, 120), np.linspace(0, 1, len(prof)), prof)
+    src_prof = src.mean(axis=1)
+    single = np.corrcoef(prof_i, src_prof)[0, 1]
+    doubled = np.corrcoef(prof_i, np.tile(src_prof[::2], 2))[0, 1]
+    assert single > 0.8 and single > doubled        # one copy of the picture, not two
+
+
+def test_vsync_alignment_survives_arbitrary_chunk_offset():
+    # Field boundaries land wherever the capture chunk starts; the VBI (darkest
+    # row window) must be rolled to the top so the picture isn't split/wrapped.
+    fs = 8_000_000.0
+    src = _gradient(120, 120)
+    bb = make_cvbs("PAL", src, fs, frames=3, interlaced=True, vbi_lines=8)
+    off = int((fs / 15625) * 150)                   # start mid-field
+    frames = reconstruct_frames(bb[off:], fs, "PAL", width=120)
+    f = frames[1]                                   # interior frame: full field of data
+    prof = f.mean(axis=1)
+    prof_i = np.interp(np.linspace(0, 1, 120), np.linspace(0, 1, len(prof)), prof)
+    corr = np.corrcoef(prof_i, src.mean(axis=1))[0, 1]
+    assert corr > 0.7
