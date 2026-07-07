@@ -26,6 +26,11 @@ _MAX_CARRIER_DEMODS_PER_BAND = 3
 _BLADERF_BACKEND = None
 _BLADERF_DEVICE = None
 
+# After a USB reset (e.g. undervoltage under RX load) the bladeRF reopen keeps failing
+# with NoDevError inside the SAME process, while a fresh process opens the device fine.
+# So this many consecutive failed cycles exit the process; systemd restarts it clean.
+_BLADERF_FAIL_LIMIT = 3
+
 
 def _get_bladerf_backend(cfg: Config):
     global _BLADERF_BACKEND, _BLADERF_DEVICE
@@ -274,6 +279,7 @@ def main() -> None:
             LOG.exception("MQTT connect failed; continuing without publishing")
             publisher = None
     backoff = 1.0
+    blade_fails = 0
     while True:
         try:
             req = view.pending() if view is not None else None
@@ -286,6 +292,7 @@ def main() -> None:
                                 emitter=emitter, controller=controller)
             holder.payload = payload
             backoff = 1.0
+            blade_fails = 0
         except Exception:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
             # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF
@@ -298,6 +305,12 @@ def main() -> None:
                         LOG.exception("device reset failed")
                 elif cfg.sdr == "bladerf":
                     _reset_bladerf_backend()
+                    blade_fails += 1
+                    if blade_fails >= _BLADERF_FAIL_LIMIT:
+                        LOG.error("bladeRF failed %d consecutive cycles; exiting so systemd "
+                                  "restarts a clean process (in-process reopen after a USB "
+                                  "reset keeps failing with NoDevError)", blade_fails)
+                        raise SystemExit(1)
             time.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
             continue

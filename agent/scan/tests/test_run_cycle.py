@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from config import Config
 import main
@@ -198,6 +199,66 @@ def test_run_cycle_uses_bladerf_backend(tmp_path, monkeypatch):
     assert payload["occupancy"]["5.8G"] > 0.0
     assert len(payload["detections"]) == 1
     assert abs(payload["detections"][0]["center_mhz"] - 5800.0) < 2.0
+
+
+def test_main_exits_after_consecutive_bladerf_failures(monkeypatch):
+    # After a USB reset (undervoltage) the bladeRF reopen keeps failing with NoDevError
+    # INSIDE the same process, while a fresh process opens fine. So repeated cycle
+    # failures in bladerf mode must exit the process and let systemd restart it clean.
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "bladerf"
+    cfg.mqtt_enabled = False
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+
+    def _boom(*a, **k):
+        raise RuntimeError("No devices available")
+    monkeypatch.setattr(main, "run_cycle", _boom)
+
+    resets = []
+    monkeypatch.setattr(main, "_reset_bladerf_backend", lambda: resets.append(1))
+
+    sleeps = [0]
+    def _sleep(_s):
+        sleeps[0] += 1
+        if sleeps[0] > 50:
+            raise AssertionError("main() kept looping; expected SystemExit after repeated bladeRF failures")
+    monkeypatch.setattr(main.time, "sleep", _sleep)
+
+    with pytest.raises(SystemExit):
+        main.main()
+
+    assert len(resets) == main._BLADERF_FAIL_LIMIT      # backend reset attempted each failed cycle
+
+
+def test_main_bladerf_failure_counter_resets_on_success(monkeypatch):
+    # A successful cycle between failures must clear the counter — only CONSECUTIVE
+    # failures escalate to a process exit.
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "bladerf"
+    cfg.mqtt_enabled = False
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+    monkeypatch.setattr(main, "_reset_bladerf_backend", lambda: None)
+
+    calls = [0]
+    def _flaky(*a, **k):
+        calls[0] += 1
+        # fail, fail, succeed, repeatedly: never _BLADERF_FAIL_LIMIT in a row
+        if calls[0] % 3 != 0:
+            raise RuntimeError("No devices available")
+        if calls[0] >= 12:
+            raise KeyboardInterrupt()               # stop the test loop cleanly
+        return {"ok": True}
+    monkeypatch.setattr(main, "run_cycle", _flaky)
+    monkeypatch.setattr(main.time, "sleep", lambda s: None)
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()                                  # KeyboardInterrupt ≠ SystemExit: no escalation happened
 
 
 def test_reset_bladerf_backend_invalidates_and_closes():
