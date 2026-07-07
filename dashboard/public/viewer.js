@@ -85,6 +85,15 @@ export function pickViewer(store) {
   return ids.find((id) => !store[id].view.active) || ids[0];
 }
 
+// The scanner whose view session is ACTIVE — display/stop must follow it. pickViewer
+// prefers an idle scanner (right for routing NEW starts, wrong for the live session).
+export function activeViewer(store) {
+  const ids = Object.keys(store || {}).filter(
+    (id) => store[id] && store[id].online && store[id].view && store[id].view.active,
+  );
+  return ids.length ? ids[0] : null;
+}
+
 // The scanner driving a physical RX5808 (for the 5.8G dual action).
 export function pickRxScanner(store) {
   const ids = Object.keys(store || {}).filter((id) => store[id] && store[id].online && store[id].rxtune);
@@ -94,6 +103,12 @@ export function pickRxScanner(store) {
 export function viewStream(store, id) {
   const v = store && store[id] && store[id].view;
   return (v && v.stream) || `${id}-view`;
+}
+
+// Player identity: changes exactly when the agent (re)starts its pipeline — every
+// start/retune mints a fresh until_ts, while announce() republishes preserve it.
+export function playerKey(view, stream) {
+  return view && view.active ? `${stream}|${view.freq_mhz}|${view.until_ts}` : '';
 }
 
 export function ageLabel(nowS, ts) {

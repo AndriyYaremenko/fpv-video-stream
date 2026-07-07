@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   emptyViewer, applyDetections, seedFromJournal, viewerRows,
   pickViewer, pickRxScanner, viewStream, ageLabel, RECENT_TTL_S, LIVE_STALE_S,
-  viewerListHtml,
+  viewerListHtml, activeViewer, playerKey,
 } from '../dashboard/public/viewer.js';
 
 const det = (over = {}) => ({
@@ -147,4 +147,24 @@ test('viewerListHtml without a viewer shows the hint and no play markers', () =>
 
 test('viewerListHtml with no rows renders the empty note', () => {
   assert.match(viewerListHtml([], 100), /детекцій немає/);
+});
+
+test('activeViewer follows the ACTIVE session even when an idle viewer exists', () => {
+  const store = {
+    busy: { online: true, view: { active: true, stream: 'busy-view' } },
+    idle: { online: true, view: { active: false, stream: 'idle-view' } },
+  };
+  assert.equal(activeViewer(store), 'busy');
+  assert.equal(pickViewer(store), 'idle');            // routing still prefers idle
+  store.busy.online = false;
+  assert.equal(activeViewer(store), null);            // offline active does not count
+  assert.equal(activeViewer({}), null);
+});
+
+test('playerKey changes on session restart and is empty when inactive', () => {
+  const a = playerKey({ active: true, freq_mhz: 5865, until_ts: 1000 }, 'hackrf-view');
+  const b = playerKey({ active: true, freq_mhz: 5865, until_ts: 1600 }, 'hackrf-view');
+  assert.notEqual(a, b);                               // same freq, new session -> new key
+  assert.equal(playerKey({ active: false }, 'hackrf-view'), '');
+  assert.equal(playerKey(null, 'hackrf-view'), '');
 });

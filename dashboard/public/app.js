@@ -7,7 +7,7 @@ import { nearestRxChannel } from '/rx5808-channels.js';
 import { galleryHtml, buildFramesQuery, toLocalDatetime } from '/frames-gallery.js';
 import {
   emptyViewer, applyDetections, seedFromJournal, viewerRows, viewerListHtml,
-  pickViewer, pickRxScanner, viewStream,
+  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey,
 } from '/viewer.js';
 
 let cfg = null;
@@ -89,7 +89,7 @@ spectrumPanel.addEventListener('click', (e) => {
 
 viewerPanel.addEventListener('click', (e) => {
   if (e.target.closest('#viewer-stop')) {
-    const vid = pickViewer(scanClient.store);
+    const vid = activeViewer(scanClient.store) || pickViewer(scanClient.store);
     if (vid) scanClient.publishView(vid, 'stop');
     return;
   }
@@ -331,24 +331,25 @@ function renderViewer() {
   }
   const hasScanners = scannersFromRegistry.length > 0;
   viewerPanel.classList.toggle('hidden', !hasScanners);
-  if (!hasScanners) return;
-  const viewerId = pickViewer(store);
-  const view = viewerId ? store[viewerId].view : null;
+  if (!hasScanners) { syncViewerPlayer(store, null, null); return; }
+  const routeId = pickViewer(store);                       // where NEW starts go
+  const displayId = activeViewer(store) || routeId;        // whose session the panel shows
+  const view = displayId ? store[displayId].view : null;
   document.getElementById('viewer-list').innerHTML = viewerListHtml(
     viewerRows(viewerState, nowS), nowS,
-    view && view.active ? view.freq_mhz : null, !!viewerId,
+    view && view.active ? view.freq_mhz : null, !!routeId,
   );
   document.getElementById('viewer-badge').textContent = view ? viewCaption(view) : '';
   document.getElementById('viewer-err').textContent = (view && view.error) || '';
   document.getElementById('viewer-stop').hidden = !(view && view.active);
-  syncViewerPlayer(store, viewerId, view);
+  syncViewerPlayer(store, displayId, view);
 }
 
 // Keep the in-panel WHEP player in sync with the view state. On retune the RTSP path is
 // recreated, so (re)connection attempts retry until the stream is back (or the key changes).
 function syncViewerPlayer(store, viewerId, view) {
   const video = document.getElementById('viewer-video');
-  const want = view && view.active ? `${viewStream(store, viewerId)}|${view.freq_mhz}` : '';
+  const want = playerKey(view, viewerId ? viewStream(store, viewerId) : '');
   if (want === viewerStreamKey) return;
   if (viewerPlayer && viewerPlayer.player) viewerPlayer.player.close();
   viewerPlayer = null;
@@ -667,4 +668,5 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
     const mq = await fetch('/api/mqtt').then((r) => (r.ok ? r.json() : null));
     if (mq && mq.url) scanClient.connect(mq, () => renderScan());
   } catch { /* no broker creds -> scan panel stays empty until available */ }
+  setInterval(renderViewer, 30000);   // age labels/TTL expiry must advance even when MQTT goes quiet
 })();
