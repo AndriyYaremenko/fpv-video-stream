@@ -143,3 +143,21 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .sdr-view-ctl .view-badge { color:#39d0ff; font-weight:600; }
 .sdr-view-ctl .view-err { color:#f87171; }
 .band-cell .chart-line.freqpick { cursor:crosshair; }
+
+/* FPV Viewer — merged multiband detection list + in-panel SDR view player */
+.viewer-panel { margin:.6rem; padding:.7rem; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+.viewer-panel.hidden { display:none; }
+.viewer-head { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+.viewer-head .view-badge { color:#39d0ff; font-weight:600; }
+.viewer-head .view-err { color:#f87171; font-size:.8rem; }
+.viewer-head button { font-size:.75rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; cursor:pointer; padding:.15rem .5rem; }
+.viewer-body { display:flex; gap:.8rem; flex-wrap:wrap; margin-top:.5rem; }
+.viewer-list { flex:1 1 340px; min-width:280px; max-height:360px; overflow-y:auto; }
+.viewer-table tr[data-vwfreq] { cursor:pointer; }
+.viewer-table tr[data-vwfreq]:hover { background:rgba(108,160,255,.10); }
+.viewer-table tr.vw-recent { opacity:.55; }
+.viewer-table tr.is-viewing { background:rgba(61,220,132,.10); }
+.viewer-table tr.is-viewing td:first-child { color:#3ddc84; }
+.vw-src { font-size:.7rem; color:#9aa4b2; border:1px solid var(--line); border-radius:3px; padding:0 .25rem; margin-right:.15rem; }
+.viewer-player { flex:1 1 320px; min-width:260px; }
+.viewer-player video { width:100%; aspect-ratio:4/3; background:#000; border:1px solid var(--line); border-radius:6px; }

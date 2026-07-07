@@ -22,6 +22,21 @@
     <button id="logout">Вийти</button>
   </header>
 
+  <section id="viewer-panel" class="viewer-panel hidden" aria-live="polite">
+    <div class="viewer-head">
+      <strong>🎯 FPV Viewer</strong>
+      <span id="viewer-badge" class="view-badge"></span>
+      <span id="viewer-err" class="view-err"></span>
+      <button id="viewer-stop" hidden>■ свіп</button>
+    </div>
+    <div class="viewer-body">
+      <div id="viewer-list" class="viewer-list"></div>
+      <div class="viewer-player">
+        <video id="viewer-video" autoplay playsinline muted></video>
+      </div>
+    </div>
+  </section>
+
   <section id="spectrum-panel" class="spectrum-panel hidden" aria-live="polite"></section>
 
   <main id="grid" class="grid" aria-live="polite"></main>
