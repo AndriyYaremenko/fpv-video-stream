@@ -157,3 +157,19 @@ def test_stop_command_during_session_exits_to_sweep():
     vc.run_view(5000.0)
     assert pub.calls[-1]["active"] is False
     assert vc.has_pending() is False
+
+
+def test_stop_after_pending_start_cancels_the_retune():
+    pub = _Pub()
+
+    def stream(freq, stop, max_s):
+        vc.set_command({"view": "start", "freq_mhz": 1280})
+        vc.set_command({"view": "stop"})           # stop arrives after the queued retune
+        return None
+
+    vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None)
+    vc.run_view(5865.0)
+    actives = [c for c in pub.calls if c["active"]]
+    assert [c["freq_mhz"] for c in actives] == [5865.0]    # no retune happened
+    assert pub.calls[-1]["active"] is False
+    assert vc.has_pending() is False

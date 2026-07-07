@@ -35,6 +35,8 @@ class ViewController:
     def set_command(self, data):
         action = data.get("view")
         if action == "stop":
+            with self._lock:
+                self._pending = None     # stop also cancels a not-yet-consumed retune/start
             self._stop.set()
             return
         if action != "start":
