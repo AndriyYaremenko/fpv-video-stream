@@ -132,14 +132,14 @@ git commit -m "perf(view): strided-median DC estimate + float32 demod path"
 
 **Files:**
 - Modify: `agent/video/frame.py` (`slice_lines`)
-- Test: `agent/video/tests/test_render.py` — NO: frame tests live in `agent/video/tests/test_pipeline.py` and `test_render.py`; ADD the new tests to `agent/video/tests/test_pipeline.py` if `slice_lines` tests already exist there, otherwise append to the file that currently tests `slice_lines`/`reconstruct_frames` (grep `slice_lines` under `agent/video/tests/` first and use that file; report which in your notes).
+- Test: `agent/video/tests/test_frame.py`
 
 **Interfaces:**
 - Produces: `slice_lines(baseband, fs, standard)` — same signature; when `fs/LINE_HZ[standard]` is integer within 1e-9 (PAL at 4/6/8 MS/s) it slices by `reshape` (no `np.interp`, no float64 coercion — dtype follows the input); otherwise the old interp path. Sync-roll unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to the test file located above:
+Append to `agent/video/tests/test_frame.py`:
 
 ```python
 import numpy as np
@@ -178,7 +178,7 @@ def test_slice_lines_preserves_float32():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `python -m pytest <test-file> -q -k slice_lines`
+Run: `python -m pytest agent/video/tests/test_frame.py -q -k slice_lines`
 Expected: the float32 test FAILS (old code coerces to float64); the reference test passes already (interp==interp) — it becomes the regression oracle for the new path.
 
 - [ ] **Step 3: Implement**
@@ -218,7 +218,7 @@ Expected: all PASS (NTSC tests exercise the interp fallback; PAL fixtures at 4/8
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agent/video/frame.py <test-file>
+git add agent/video/frame.py agent/video/tests/test_frame.py
 git commit -m "perf(view): reshape fast path for integer samples-per-line"
 ```
 
@@ -228,7 +228,7 @@ git commit -m "perf(view): reshape fast path for integer samples-per-line"
 
 **Files:**
 - Modify: `agent/video/frame.py` (`reconstruct_frames`, `build_frame`)
-- Test: same test file as Task 2
+- Test: `agent/video/tests/test_frame.py`
 
 **Interfaces:**
 - Produces: `reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18, budget=None)` — with `budget=k`, builds exactly `min(k, n_fields)` frames picked EVENLY via `np.round(np.linspace(0, n_frames - 1, budget)).astype(int)`; `budget=None` = old behavior. Each budgeted frame equals the corresponding unbudgeted one. `build_frame` computes in the input dtype (float32 stays float32). Task 4 passes the streamer's fps budget.
@@ -271,7 +271,7 @@ def test_build_frame_pipeline_stays_float32():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `python -m pytest <test-file> -q -k "budget or build_frame_pipeline"`
+Run: `python -m pytest agent/video/tests/test_frame.py -q -k "budget or build_frame_pipeline"`
 Expected: FAIL — `TypeError: unexpected keyword 'budget'`; float32 test fails on float64 output.
 
 - [ ] **Step 3: Implement**
@@ -329,7 +329,7 @@ Expected: all PASS (scan-side video emit uses `reconstruct_frames` without budge
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agent/video/frame.py <test-file>
+git add agent/video/frame.py agent/video/tests/test_frame.py
 git commit -m "perf(view): field budget in reconstruct_frames + float32 build_frame"
 ```
 
@@ -578,4 +578,4 @@ View a real signal ≥60 s at 6 MS/s → `journalctl -u fpv-scan-hackrf -f` stat
 
 - **Spec coverage:** strided median + float32 demod (T1), reshape fast path (T2), field budget + float32 frames (T3), scale-free reader + budget wiring + bench parity (T4), 2-deep mailbox (T5), deploy/gates/acceptance + 6 MS/s restore (T6). Golden/equivalence tests in T1-T4; scan path untouched (only `stream_demod`/`bench` swap readers). ✓
 - **Type consistency:** `fm_demod(iq, median_stride=64)`, `lowpass` float32, `slice_lines` dtype-follow, `reconstruct_frames(..., budget=None)`, `chunk_to_frames(..., budget=None)`, `iq_from_int8_fast(raw)`, `ChunkMailbox(depth=2)` — call sites in T4/T5 match. ✓
-- **Placeholder scan:** complete code in every step; T2's test-file location is resolved by the implementer via grep with an explicit report-back (the file split isn't knowable from the plan author's cache). ✓
+- **Placeholder scan:** complete code in every step; test file for T2/T3 is `agent/video/tests/test_frame.py` (verified). ✓
