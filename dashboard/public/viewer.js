@@ -1,6 +1,7 @@
 // dashboard/public/viewer.js — «FPV Viewer»: merged multiband detection list.
 // Pure state/list helpers (unit-tested) + list HTML builder + DOM render (browser only).
 import { detectionKey } from './alert.js';
+import { classColor, fmtFreq } from './spectrum.js';
 
 export const RECENT_TTL_S = 300;      // dimmed-but-clickable window after a signal disappears
 export const LIVE_STALE_S = 120;      // a scanner claim older than this no longer counts as live
@@ -99,4 +100,32 @@ export function ageLabel(nowS, ts) {
   const s = Math.max(0, nowS - ts);
   if (s < 60) return 'щойно';
   return `${Math.round(s / 60)} хв тому`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Merged detection list as an HTML table. activeFreq = the active view's freq_mhz (or null);
+// canView = a view-capable scanner is online (rows get ▶ and are clickable).
+export function viewerListHtml(rows, nowS, activeFreq = null, canView = true) {
+  if (!rows.length) return '<p class="scan-empty">детекцій немає — чекаємо на скан</p>';
+  const hint = canView ? '' : '<p class="scan-empty">SDR view недоступний (view-сканер офлайн)</p>';
+  const body = rows.map((e) => {
+    const viewing = activeFreq != null && Math.abs(e.center_mhz - activeFreq) < 3;
+    const cls = `${e.live ? '' : 'vw-recent'}${viewing ? ' is-viewing' : ''}`.trim();
+    const freq = `${fmtFreq(e.center_mhz)}${e.channel ? ` (${escapeHtml(e.channel)})` : ''}`;
+    const src = Object.keys(e.seen_by).map((s) => `<span class="vw-src">${escapeHtml(s)}</span>`).join(' ');
+    return `<tr${cls ? ` class="${cls}"` : ''} data-vwfreq="${Number(e.center_mhz)}" data-vwband="${escapeHtml(e.band || '')}">
+      <td>${canView ? '▶' : ''}</td>
+      <td>${freq}</td>
+      <td>${escapeHtml(e.band || '')}</td>
+      <td><span class="cls" style="color:${classColor(e.class)}">${escapeHtml(e.class || '')}</span></td>
+      <td>${e.snr_db == null ? '—' : escapeHtml(String(e.snr_db))} dB</td>
+      <td>${src || '—'}</td>
+      <td>${e.live ? 'зараз' : ageLabel(nowS, e.last_seen)}</td></tr>`;
+  }).join('');
+  return `${hint}<table class="scan-table viewer-table">
+    <thead><tr><th></th><th>Частота</th><th>Бенд</th><th>Клас</th><th>SNR</th><th>Джерело</th><th>Коли</th></tr></thead>
+    <tbody>${body}</tbody></table>`;
 }

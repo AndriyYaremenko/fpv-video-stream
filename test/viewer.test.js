@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   emptyViewer, applyDetections, seedFromJournal, viewerRows,
   pickViewer, pickRxScanner, viewStream, ageLabel, RECENT_TTL_S, LIVE_STALE_S,
+  viewerListHtml,
 } from '../dashboard/public/viewer.js';
 
 const det = (over = {}) => ({
@@ -114,4 +115,36 @@ test('applyDetections never freezes a scanner on missing/zero payload ts', () =>
   const rows = viewerRows(vs, 131);
   assert.equal(rows.length, 2);                       // the second zero-ts payload was NOT dropped
   assert.equal(rows.filter((r) => r.live).length, 1); // 1280 live; 5865 lost its claim, now recent
+});
+
+test('viewerListHtml renders clickable rows with band/freq data attrs', () => {
+  const rows = [
+    { key: 'k1', band: '4.9G', center_mhz: 4240, channel: null, class: 'analog',
+      snr_db: 22, power_dbm: -40, scanners: { bladerf: 100 }, seen_by: { bladerf: true },
+      last_seen: 100, live: true },
+    { key: 'k2', band: '5.8G', center_mhz: 5865, channel: 'A1', class: 'analog',
+      snr_db: 18, power_dbm: -50, scanners: {}, seen_by: { bladerf: true, hackrf: true },
+      last_seen: 40, live: false },
+  ];
+  const html = viewerListHtml(rows, 100, 4240, true);
+  assert.match(html, /data-vwfreq="4240" data-vwband="4\.9G"/);
+  assert.match(html, /data-vwfreq="5865" data-vwband="5\.8G"/);
+  assert.match(html, /is-viewing/);              // 4240 row highlighted (active view)
+  assert.match(html, /vw-recent/);               // 5865 row dimmed
+  assert.match(html, /5865 МГц \(A1\)/);
+  assert.match(html, /1 хв тому/);
+  assert.match(html, /bladerf/);
+  assert.doesNotMatch(html, /SDR view недоступний/);
+});
+
+test('viewerListHtml without a viewer shows the hint and no play markers', () => {
+  const rows = [{ key: 'k', band: '5.8G', center_mhz: 5865, channel: null, class: 'analog',
+    snr_db: 18, power_dbm: -50, scanners: { b: 100 }, seen_by: { b: true }, last_seen: 100, live: true }];
+  const html = viewerListHtml(rows, 100, null, false);
+  assert.match(html, /SDR view недоступний/);
+  assert.doesNotMatch(html, /▶/);
+});
+
+test('viewerListHtml with no rows renders the empty note', () => {
+  assert.match(viewerListHtml([], 100), /детекцій немає/);
 });
