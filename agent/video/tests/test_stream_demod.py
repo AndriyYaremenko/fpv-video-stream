@@ -209,3 +209,74 @@ def test_frame_queue_close_drains_then_none():
     assert q.closed
     assert q.get() == b"a" and q.get() == b"b"    # close still drains the tail
     assert q.get(timeout=0.01) is None            # drained -> end of stream
+
+
+from stream_demod import writer_loop
+
+
+class _Pacer:
+    def __init__(self, fail_after=None):
+        self.out = []
+        self._fail_after = fail_after
+
+    def tick(self, fr):
+        if self._fail_after is not None and len(self.out) >= self._fail_after:
+            raise BrokenPipeError()
+        self.out.append(fr)
+
+
+def test_writer_loop_drains_closed_queue_in_order():
+    q = FrameQueue(maxlen=8)
+    for b in (b"1", b"2", b"3"):
+        q.put(b)
+    q.close()
+    pacer = _Pacer()
+    err = {"msg": None}
+    writer_loop(q, pacer, _FakeProc(), threading.Event(), err, clock=lambda: 0.0)
+    assert pacer.out == [b"1", b"2", b"3"]
+    assert err["msg"] is None
+
+
+def test_writer_loop_exits_immediately_on_stop_without_draining():
+    q = FrameQueue(maxlen=8)
+    q.put(b"1")
+    stop = threading.Event()
+    stop.set()
+    pacer = _Pacer()
+    writer_loop(q, pacer, _FakeProc(), stop, {"msg": None}, clock=lambda: 0.0)
+    assert pacer.out == []                        # nothing written after stop
+
+
+def test_writer_loop_reports_pipe_and_encoder_death():
+    q = FrameQueue(maxlen=8)
+    q.put(b"1"); q.put(b"2")
+    err = {"msg": None}
+    writer_loop(q, _Pacer(fail_after=1), _FakeProc(), threading.Event(), err,
+                clock=lambda: 0.0)
+    assert err["msg"] == "ffmpeg pipe closed"
+
+    dead = _FakeProc()
+    dead.poll = lambda: 1                         # encoder died, queue open+empty
+    err2 = {"msg": None}
+    writer_loop(FrameQueue(maxlen=8), _Pacer(), dead, threading.Event(), err2,
+                clock=lambda: 0.0)
+    assert err2["msg"] == "ffmpeg exited"
+
+
+def test_writer_loop_logs_stats_line(caplog):
+    import logging
+    q = FrameQueue(maxlen=8)
+    for b in (b"1", b"2", b"3"):
+        q.put(b)
+    q.close()
+    t = [0.0]
+
+    def clock():
+        t[0] += 6.0                               # 2 reads cross the 10 s threshold
+        return t[0]
+
+    with caplog.at_level(logging.INFO):
+        writer_loop(q, _Pacer(), _FakeProc(), threading.Event(), {"msg": None},
+                    dropped_chunks=lambda: 7, clock=clock)
+    lines = [r.getMessage() for r in caplog.records if "dropped_chunks" in r.getMessage()]
+    assert lines and "dropped_chunks=7" in lines[0] and "queue=" in lines[0]

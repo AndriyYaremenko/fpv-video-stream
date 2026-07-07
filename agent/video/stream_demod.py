@@ -166,6 +166,44 @@ class FramePacer:
         self._next = max(self._next + self._period, self._clock() - self._period)
 
 
+def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, clock=None,
+                log_every_s=10.0):
+    """Writer-thread body: pace frames from the queue into ffmpeg stdin.
+
+    Runs until stop_event (immediate, no drain — a retune/stop must not flush
+    stale frames), the queue is closed and drained (clean end), a write fails,
+    or the encoder dies. Failures land in the shared err slot for the demod
+    loop to pick up. Logs the smoothness stats (the acceptance metric) every
+    ~log_every_s seconds."""
+    clock = clock or time.monotonic
+    written = 0
+    last_log = clock()
+    last_written = 0
+    while not stop_event.is_set():
+        fr = q.get(timeout=0.1)
+        if fr is None:
+            if q.closed:
+                return
+            if enc.poll() is not None:
+                err["msg"] = "ffmpeg exited"
+                return
+        else:
+            try:
+                pacer.tick(fr)
+                written += 1
+            except (BrokenPipeError, OSError):
+                err["msg"] = "ffmpeg pipe closed"
+                return
+        now = clock()
+        if now - last_log >= log_every_s:
+            fps = (written - last_written) / (now - last_log)
+            LOG.info("view stream: %.1f fps, queue=%d, dropped_frames=%d, dropped_chunks=%d",
+                     fps, len(q), q.dropped,
+                     dropped_chunks() if dropped_chunks is not None else 0)
+            last_log = now
+            last_written = written
+
+
 def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                popen=None, clock=None, sleep=None):
     """Blocking capture->demod->encode loop for one view session.
