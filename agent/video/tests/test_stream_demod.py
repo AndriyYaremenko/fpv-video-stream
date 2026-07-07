@@ -300,3 +300,37 @@ def test_run_stream_writes_every_selected_frame_of_a_chunk():
     frame_size = 320 * 288
     budget = int(round(CHUNK_S * 10.0))            # _vcfg() fps = 10 -> 5 frames
     assert len(procs[1].stdin.getvalue()) == budget * frame_size
+
+
+def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
+    # Timeout exit with a healthy pipeline, then the writer fails while draining
+    # the tail: the error must still surface as run_stream's return value.
+    import itertools
+    import time as _time
+
+    import stream_demod as sd
+
+    def _failing_writer(q, pacer, enc, stop_event, err, **kw):
+        while not q.closed:
+            _time.sleep(0.001)
+        err["msg"] = "ffmpeg pipe closed"            # failure lands in the drain window
+
+    monkeypatch.setattr(sd, "writer_loop", _failing_writer)
+    fs = 4e6
+    chunk = _chunk_bytes(fs)
+
+    class _Endless:
+        def read(self, n):
+            return chunk
+
+    def popen(cmd, **kw):
+        p = _FakeProc()
+        if cmd[0] == "hackrf_transfer":
+            p.stdout = _Endless()
+            p.poll = lambda: None
+        return p
+
+    ticks = itertools.count()
+    err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=1.0, popen=popen,
+                     clock=lambda: next(ticks) * 0.3, sleep=lambda s: None)
+    assert err == "ffmpeg pipe closed"
