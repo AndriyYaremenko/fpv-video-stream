@@ -21,7 +21,8 @@ export async function startWhep(video, whepUrl, user, pass) {
   if (!res.ok) { pc.close(); throw new Error(`WHEP ${res.status}`); }
   const answer = await res.text();
   await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-  return { close: () => { pc.close(); video.srcObject = null; } };
+  // Null only if we still own the element — a stale close must not blank a newer stream.
+  return { close: () => { pc.close(); if (video.srcObject === stream) video.srcObject = null; } };
 }
 
 function iceGatheringComplete(pc, timeoutMs) {
