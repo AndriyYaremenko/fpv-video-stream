@@ -96,3 +96,64 @@ def test_announce_mid_session_republishes_the_active_state():
     assert len(actives) == 2             # session start + reconnect re-announce
     assert actives[1]["freq_mhz"] == 5865.0 and actives[1]["until_ts"] == 1060
     assert all(c["stream"] == "hackrf-view" for c in pub.calls)
+
+
+def test_has_pending_is_non_consuming():
+    vc = ViewController(None, run_stream=lambda *a: None)
+    assert vc.has_pending() is False
+    vc.set_command({"view": "start", "freq_mhz": 5865})
+    assert vc.has_pending() is True
+    assert vc.pending() == 5865.0
+    assert vc.has_pending() is False
+
+
+def test_run_view_retunes_in_place_on_start_command():
+    pub = _Pub()
+    freqs = []
+
+    def stream(freq, stop, max_s):
+        freqs.append(freq)
+        if len(freqs) == 1:
+            vc.set_command({"view": "start", "freq_mhz": 1280})
+            assert stop.is_set()         # the running stream is interrupted immediately
+        return None
+
+    vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None, clock=lambda: 1000.0)
+    assert vc.run_view(5865.0) is None
+    assert freqs == [5865.0, 1280.0]     # second session started WITHOUT leaving run_view
+    actives = [c for c in pub.calls if c["active"]]
+    assert [c["freq_mhz"] for c in actives] == [5865.0, 1280.0]
+    assert all(c["until_ts"] == 1060 for c in actives)   # fresh 10-min deadline per retune
+    assert pub.calls[-1]["active"] is False              # single final inactive publish
+
+
+def test_retune_after_stream_error_resets_device_and_keeps_retune():
+    pub = _Pub()
+    calls = []
+    resets = []
+
+    def stream(freq, stop, max_s):
+        calls.append(freq)
+        if len(calls) == 1:
+            vc.set_command({"view": "start", "freq_mhz": 2400})
+            return "hackrf_transfer exited"
+        return None
+
+    vc = ViewController(pub, stream, max_s=60.0, reset=lambda: resets.append(len(calls)))
+    assert vc.run_view(5865.0) is None                   # last session ended clean
+    assert calls == [5865.0, 2400.0]
+    assert resets and resets[0] == 1                     # reset BETWEEN error and retune
+    assert pub.calls[-1]["error"] is None                # final state carries the last error only
+
+
+def test_stop_command_during_session_exits_to_sweep():
+    pub = _Pub()
+
+    def stream(freq, stop, max_s):
+        vc.set_command({"view": "stop"})
+        return None
+
+    vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None)
+    vc.run_view(5000.0)
+    assert pub.calls[-1]["active"] is False
+    assert vc.has_pending() is False

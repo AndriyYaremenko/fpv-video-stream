@@ -46,11 +46,17 @@ class ViewController:
             return
         with self._lock:
             self._pending = float(freq)
+        self._stop.set()                 # active session -> retune now; idle -> cleared on entry
 
     def pending(self):
         with self._lock:
             p, self._pending = self._pending, None
         return p
+
+    def has_pending(self):
+        """Non-consuming pending check — the sweep's abort hook."""
+        with self._lock:
+            return self._pending is not None
 
     def announce(self):
         """(Re)publish the last-known retained state — startup capability announce
@@ -59,19 +65,33 @@ class ViewController:
         self._pub(int(self._clock()), active, freq_mhz, until_ts, error)
 
     def run_view(self, freq_mhz):
-        self._stop.clear()                   # a stale idle-time stop must not kill this session
-        ts = int(self._clock())
-        self._pub(ts, True, freq_mhz, ts + int(self._max_s))
+        freq = freq_mhz
         error = None
         try:
-            error = self._run_stream(freq_mhz, self._stop, self._max_s)
-        except Exception as e:
-            LOG.exception("view stream crashed")
-            error = str(e)
+            while True:
+                self._stop.clear()       # a stale stop (or our own retune flag) must not kill this session
+                ts = int(self._clock())
+                self._pub(ts, True, freq, ts + int(self._max_s))
+                try:
+                    error = self._run_stream(freq, self._stop, self._max_s)
+                except Exception as e:
+                    LOG.exception("view stream crashed")
+                    error = str(e)
+                nxt = self.pending()
+                if nxt is None:
+                    break                # stop / timeout / unrecovered error -> back to sweep
+                if error is not None:
+                    try:
+                        self._reset()    # leave the device clean before retrying at the new freq
+                    except Exception:
+                        LOG.exception("view: device reset failed")
+                    error = None
+                LOG.info("view retune -> %.1f MHz", nxt)
+                freq = nxt
         finally:
             self._pub(int(self._clock()), False, None, None, error)
             try:
-                self._reset()                # leave the device clean for the next sweep
+                self._reset()            # leave the device clean for the next sweep
             except Exception:
                 LOG.exception("view: device reset failed")
             self._stop.clear()
