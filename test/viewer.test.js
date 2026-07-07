@@ -106,3 +106,12 @@ test('ageLabel', () => {
   assert.equal(ageLabel(100, 70), 'щойно');
   assert.equal(ageLabel(400, 100), '5 хв тому');
 });
+
+test('applyDetections never freezes a scanner on missing/zero payload ts', () => {
+  const vs = emptyViewer();
+  applyDetections(vs, 'b', { ts: 0, detections: [det()] }, 100);
+  applyDetections(vs, 'b', { ts: 0, detections: [det({ band: '1.2G', center_mhz: 1280, channel: null })] }, 130);
+  const rows = viewerRows(vs, 131);
+  assert.equal(rows.length, 2);                       // the second zero-ts payload was NOT dropped
+  assert.equal(rows.filter((r) => r.live).length, 1); // 1280 live; 5865 lost its claim, now recent
+});

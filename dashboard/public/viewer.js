@@ -22,9 +22,10 @@ function prune(vs, nowS) {
 // Apply one scanner's fpv/<id>/detection payload ({ts, detections:[...]}) — idempotent per ts.
 export function applyDetections(vs, scannerId, det, nowS) {
   if (!det || !Array.isArray(det.detections)) return vs;
-  if (vs.seenTs[scannerId] === det.ts) return vs;
-  vs.seenTs[scannerId] = det.ts;
-  const ts = Number(det.ts) || nowS;
+  const payloadTs = Number(det.ts) || 0;
+  if (payloadTs && vs.seenTs[scannerId] === payloadTs) return vs;  // idempotent per cycle ts; unknown ts (0) never dedupes
+  vs.seenTs[scannerId] = payloadTs;
+  const ts = payloadTs || nowS;
   for (const d of det.detections) {
     const key = detectionKey(d);
     const e = vs.entries[key] || (vs.entries[key] = { key, scanners: {}, seen_by: {}, last_seen: 0 });
