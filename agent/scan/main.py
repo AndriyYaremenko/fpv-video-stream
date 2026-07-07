@@ -92,13 +92,17 @@ def _downsample(spec: Spectrum, points: int = 64) -> list:
     return [round(float(p[i]), 1) for i in idx]
 
 
-def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller=None) -> dict:
+def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller=None,
+              abort=None) -> dict | None:
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
     rx_carrier_centers = []
 
     for band, brange in cfg.bands.items():
+        if abort is not None and abort():
+            LOG.info("scan cycle aborted before band %s (view pending)", band)
+            return None
         spec = _get_spectrum(cfg, band, brange)
         occupancy[band] = _occupancy(spec, cfg)
         spectrum_summary[band] = _downsample(spec)
@@ -121,6 +125,9 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
 
         budget = cfg.max_dwells_per_cycle
         for i, c in enumerate(cands):
+            if abort is not None and abort():
+                LOG.info("scan cycle aborted mid-band %s (view pending)", band)
+                return None
             if i >= budget:
                 LOG.info("deferred %d candidates in %s (budget=%d)", len(cands) - budget, band, budget)
                 break
@@ -160,6 +167,9 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
             done = {round(c.center_mhz, 1) for c in cands[:budget]}
             extra = 0
             for c in loose:
+                if abort is not None and abort():
+                    LOG.info("scan cycle aborted mid-band %s (view pending)", band)
+                    return None
                 if extra >= _MAX_CARRIER_DEMODS_PER_BAND:
                     break
                 key = round(c.center_mhz, 1)
@@ -253,7 +263,7 @@ def main() -> None:
             viewcfg = load_video_config()
             if viewcfg.view_enabled and viewcfg.view_push_url:
                 import stream_demod
-                from view_controller import ViewController
+                from view_controller import ViewController, stream_name_from_push_url
                 view = ViewController(
                     publisher,
                     run_stream=lambda freq, stop, max_s: stream_demod.run_stream(
@@ -261,8 +271,10 @@ def main() -> None:
                         lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable),
                     max_s=viewcfg.view_max_s,
                     reset=reset_hackrf,
+                    stream=stream_name_from_push_url(viewcfg.view_push_url),
                 )
                 publisher.on_view_command = view.set_command
+                publisher.on_connected = view.announce   # retained announce on every (re)connect
                 LOG.info("SDR view mode enabled (push=%s max=%.0fs)",
                          viewcfg.view_push_url.split("@")[-1], viewcfg.view_max_s)
     except Exception:
@@ -289,10 +301,15 @@ def main() -> None:
                 LOG.info("SDR view ended; sweep resumes")
                 continue
             payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher,
-                                emitter=emitter, controller=controller)
+                                emitter=emitter, controller=controller,
+                                abort=view.has_pending if view is not None else None)
+            if payload is None:
+                continue                 # aborted for a pending view -> enter it immediately
             holder.payload = payload
             backoff = 1.0
             blade_fails = 0
+            if view is not None and view.has_pending():
+                continue    # completed cycle already published; enter the pending view now
         except Exception:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
             # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF

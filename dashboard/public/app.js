@@ -1,10 +1,14 @@
 // dashboard/public/app.js — grid render, WHEP players, device management (add/delete/creds), tile sizing.
 import { startWhep } from '/whep.js';
-import { splitByKind, renderSpectrum, classColor, fmtFreq } from '/spectrum.js';
+import { splitByKind, renderSpectrum, classColor, fmtFreq, viewCaption } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
 import { galleryHtml, buildFramesQuery, toLocalDatetime } from '/frames-gallery.js';
+import {
+  emptyViewer, applyDetections, seedFromJournal, viewerRows, viewerListHtml,
+  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey,
+} from '/viewer.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
@@ -15,6 +19,10 @@ const alerter = new SoundAlerter();
 let prevScanKeys = null;
 const scanClient = new MqttScanClient();
 let scannersFromRegistry = [];
+const viewerState = emptyViewer();
+const viewerPanel = document.getElementById('viewer-panel');
+let viewerPlayer = null;      // {player}|null
+let viewerStreamKey = '';     // `${stream}|${freq}` of the running/starting player
 
 spectrumPanel.addEventListener('click', (e) => {
   const scanBlock = e.target.closest('[data-scanner-id]');
@@ -77,6 +85,25 @@ spectrumPanel.addEventListener('click', (e) => {
   if (act === 'edit') openEditForm(id);
   else if (act === 'del') deleteScanner(id);
   else if (act === 'info') scannerInfoModal(lastById.get(id) || { id, name: id, location: '' }, false);
+});
+
+viewerPanel.addEventListener('click', (e) => {
+  if (e.target.closest('#viewer-stop')) {
+    const vid = activeViewer(scanClient.store) || pickViewer(scanClient.store);
+    if (vid) scanClient.publishView(vid, 'stop');
+    return;
+  }
+  const row = e.target.closest('[data-vwfreq]');
+  if (!row) return;
+  const f = Number(row.dataset.vwfreq);
+  const vid = pickViewer(scanClient.store);
+  if (!vid || !Number.isFinite(f) || f < 100 || f > 6000) return;
+  scanClient.publishView(vid, 'start', f);
+  if (row.dataset.vwband === '5.8G') {           // dual action: also tune the RX5808
+    const rxId = pickRxScanner(scanClient.store);
+    const ch = nearestRxChannel(f);
+    if (rxId && ch) scanClient.publishCommand(rxId, { mode: 'manual', channel: ch.name });
+  }
 });
 
 // RX5808 channel <select> -> tune that channel (manual)
@@ -273,6 +300,7 @@ function renderScan() {
   if (!scanners.length) {
     spectrumPanel.classList.add('hidden');
     spectrumPanel.innerHTML = '';
+    renderViewer();
     return;
   }
   const store = scanClient.store;
@@ -291,6 +319,53 @@ function renderScan() {
   for (const [vid, val] of Object.entries(typed)) {
     const inp = spectrumPanel.querySelector(`[data-scanner-id="${vid}"] .view-freq`);
     if (inp && !inp.value) inp.value = val;
+  }
+  renderViewer();
+}
+
+function renderViewer() {
+  const store = scanClient.store;
+  const nowS = Math.floor(Date.now() / 1000);
+  for (const [sid, live] of Object.entries(store)) {
+    if (live.detection) applyDetections(viewerState, sid, live.detection, nowS);
+  }
+  const hasScanners = scannersFromRegistry.length > 0;
+  viewerPanel.classList.toggle('hidden', !hasScanners);
+  if (!hasScanners) { syncViewerPlayer(store, null, null); return; }
+  const routeId = pickViewer(store);                       // where NEW starts go
+  const displayId = activeViewer(store) || routeId;        // whose session the panel shows
+  const view = displayId ? store[displayId].view : null;
+  document.getElementById('viewer-list').innerHTML = viewerListHtml(
+    viewerRows(viewerState, nowS), nowS,
+    view && view.active ? view.freq_mhz : null, !!routeId,
+  );
+  document.getElementById('viewer-badge').textContent = view ? viewCaption(view) : '';
+  document.getElementById('viewer-err').textContent = (view && view.error) || '';
+  document.getElementById('viewer-stop').hidden = !(view && view.active);
+  syncViewerPlayer(store, displayId, view);
+}
+
+// Keep the in-panel WHEP player in sync with the view state. On retune the RTSP path is
+// recreated, so (re)connection attempts retry until the stream is back (or the key changes).
+function syncViewerPlayer(store, viewerId, view) {
+  const video = document.getElementById('viewer-video');
+  const want = playerKey(view, viewerId ? viewStream(store, viewerId) : '');
+  if (want === viewerStreamKey) return;
+  if (viewerPlayer && viewerPlayer.player) viewerPlayer.player.close();
+  viewerPlayer = null;
+  viewerStreamKey = want;
+  if (!want) { video.srcObject = null; return; }
+  startViewerWhep(video, viewStream(store, viewerId), want, 0);
+}
+
+async function startViewerWhep(video, stream, key, attempt) {
+  if (viewerStreamKey !== key || attempt > 40) return;      // superseded or ~60 s of retries
+  try {
+    const p = await startWhep(video, `${cfg.webrtcBase}/${stream}/whep`, cfg.readUser, cfg.readPass);
+    if (viewerStreamKey !== key) { p.close(); return; }
+    viewerPlayer = { player: p };
+  } catch {
+    setTimeout(() => startViewerWhep(video, stream, key, attempt + 1), 1500);
   }
 }
 
@@ -586,7 +661,12 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
   render(first);
   connectSSE();
   try {
+    const res = await fetch('/api/detections?limit=500');
+    if (res.ok) seedFromJournal(viewerState, await res.json(), Math.floor(Date.now() / 1000));
+  } catch { /* live-only if the journal is unavailable */ }
+  try {
     const mq = await fetch('/api/mqtt').then((r) => (r.ok ? r.json() : null));
     if (mq && mq.url) scanClient.connect(mq, () => renderScan());
   } catch { /* no broker creds -> scan panel stays empty until available */ }
+  setInterval(renderViewer, 30000);   // age labels/TTL expiry must advance even when MQTT goes quiet
 })();

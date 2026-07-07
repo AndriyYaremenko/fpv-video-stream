@@ -288,7 +288,41 @@ def test_publish_view_contract():
     topic, data, qos, retain = p._client.published[0]
     assert topic == "fpv/scan-01/view" and qos == 1 and retain is True
     assert data == {"scanner_id": "scan-01", "ts": 123, "active": True,
-                    "freq_mhz": 5865.0, "until_ts": 723, "error": None}
+                    "freq_mhz": 5865.0, "until_ts": 723, "error": None, "stream": None}
     p.publish_view(124, False, error="ffmpeg exited")
     data2 = p._client.published[1][1]
     assert data2["active"] is False and data2["error"] == "ffmpeg exited"
+
+
+def test_publish_view_carries_stream_name():
+    p = _MP("h", 1883, "", "", "scan-01")
+    p._client = _FakeViewClient()
+    p.publish_view(123, True, freq_mhz=5865.0, until_ts=723, stream="hackrf-view")
+    topic, data, qos, retain = p._client.published[0]
+    assert topic == "fpv/scan-01/view" and qos == 1 and retain is True
+    assert data["stream"] == "hackrf-view"
+    p.publish_view(124, False)                      # stream defaults to None
+    assert p._client.published[1][1]["stream"] is None
+
+
+def test_on_connected_hook_fires_after_connect_housekeeping():
+    fake = FakeClient()
+    p = _pub(fake)
+    p.connect(ts=100)
+    calls = []
+    p.on_connected = lambda: calls.append(1)
+    p._on_connect(fake, None, None, 0)
+    assert calls == [1]
+    # refused CONNACK must NOT fire the hook
+    p._on_connect(fake, None, None, 5)
+    assert calls == [1]
+
+
+def test_on_connected_hook_errors_are_swallowed():
+    fake = FakeClient()
+    p = _pub(fake)
+    p.connect(ts=100)
+    def boom():
+        raise RuntimeError("boom")
+    p.on_connected = boom
+    p._on_connect(fake, None, None, 0)              # must not raise

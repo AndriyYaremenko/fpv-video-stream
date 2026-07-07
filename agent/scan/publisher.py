@@ -54,6 +54,7 @@ class MqttPublisher:
         self._t_view = f"fpv/{scanner_id}/view"
         self.on_command = None          # set by the caller: fn(mode, channel)
         self.on_view_command = None     # set by the caller: fn(dict) — SDR view start/stop
+        self.on_connected = None        # set by the caller: fn() — runs after each (re)connect
         self._client = None
 
     def connect(self, ts):
@@ -81,6 +82,11 @@ class MqttPublisher:
                 qos=self.QOS_STATUS, retain=True,
             )
             client.subscribe(self._t_rxcmd)   # dashboard commands (re-subscribed on reconnect)
+            if self.on_connected is not None:
+                try:
+                    self.on_connected()
+                except Exception:
+                    LOG.exception("on_connected hook failed")
         except Exception:
             LOG.exception("status publish / command subscribe failed")
 
@@ -136,11 +142,11 @@ class MqttPublisher:
             self.QOS_DETECTION,
         )
 
-    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None):
+    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None, stream=None):
         self._publish(
             self._t_view,
             {"scanner_id": self.scanner_id, "ts": ts, "active": bool(active),
-             "freq_mhz": freq_mhz, "until_ts": until_ts, "error": error},
+             "freq_mhz": freq_mhz, "until_ts": until_ts, "error": error, "stream": stream},
             self.QOS_DETECTION,
         )
 
