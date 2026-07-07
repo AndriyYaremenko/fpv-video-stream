@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyStore, reduce, buildCommand } from '../dashboard/public/mqtt-scan.js';
+import { emptyStore, reduce, buildCommand, buildViewCommand } from '../dashboard/public/mqtt-scan.js';
 
 test('reduce ignores unknown/malformed topics', () => {
   assert.deepEqual(reduce(emptyStore(), 'fpv/x/other', '{}'), {});
@@ -79,4 +79,20 @@ test('reduce stores the rxtune state', () => {
 test('buildCommand shapes mode + channel', () => {
   assert.deepEqual(buildCommand('manual', 'A1'), { mode: 'manual', channel: 'A1' });
   assert.deepEqual(buildCommand('scan'), { mode: 'scan', channel: null });
+});
+
+test('reduce: fpv/<id>/view updates the view state', () => {
+  const s = reduce(emptyStore(), 'fpv/hackrf/view', JSON.stringify({
+    scanner_id: 'hackrf', ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null,
+  }));
+  assert.deepEqual(s.hackrf.view, { ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null });
+  reduce(s, 'fpv/hackrf/view', JSON.stringify({ ts: 6, active: false, error: 'ffmpeg exited' }));
+  assert.equal(s.hackrf.view.active, false);
+  assert.equal(s.hackrf.view.freq_mhz, null);
+  assert.equal(s.hackrf.view.error, 'ffmpeg exited');
+});
+
+test('buildViewCommand: start carries freq, stop does not', () => {
+  assert.deepEqual(buildViewCommand('start', 5865), { view: 'start', freq_mhz: 5865 });
+  assert.deepEqual(buildViewCommand('stop'), { view: 'stop' });
 });

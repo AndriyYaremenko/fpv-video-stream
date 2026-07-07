@@ -241,3 +241,54 @@ def test_on_message_ignores_non_dict_payload():
 def test_on_message_noop_when_no_handler():
     p = publisher.MqttPublisher("h", 1, "u", "p", "hackrf")   # on_command stays None
     p._on_message(None, None, _Msg(json.dumps({"mode": "scan"})))   # must not raise
+
+
+import json as _json
+
+from publisher import MqttPublisher as _MP
+
+
+class _Msg:
+    def __init__(self, payload):
+        self.payload = payload
+
+
+def test_on_message_routes_view_and_legacy_separately():
+    p = _MP("h", 1883, "", "", "scan-01")
+    seen = {}
+    p.on_command = lambda mode, ch: seen.setdefault("rx", (mode, ch))
+    p.on_view_command = lambda d: seen.setdefault("view", d)
+    p._on_message(None, None, _Msg(b'{"view":"start","freq_mhz":5865}'))
+    p._on_message(None, None, _Msg(b'{"mode":"manual","channel":"F4"}'))
+    assert seen["view"] == {"view": "start", "freq_mhz": 5865}
+    assert seen["rx"] == ("manual", "F4")
+
+
+def test_view_payload_never_reaches_legacy_handler():
+    p = _MP("h", 1883, "", "", "scan-01")
+    calls = []
+    p.on_command = lambda mode, ch: calls.append((mode, ch))
+    p.on_view_command = None                       # even with no view handler wired
+    p._on_message(None, None, _Msg(b'{"view":"stop"}'))
+    assert calls == []
+
+
+class _FakeViewClient:
+    def __init__(self):
+        self.published = []
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.published.append((topic, _json.loads(payload), qos, retain))
+
+
+def test_publish_view_contract():
+    p = _MP("h", 1883, "", "", "scan-01")
+    p._client = _FakeViewClient()
+    p.publish_view(123, True, freq_mhz=5865.0, until_ts=723)
+    topic, data, qos, retain = p._client.published[0]
+    assert topic == "fpv/scan-01/view" and qos == 1 and retain is True
+    assert data == {"scanner_id": "scan-01", "ts": 123, "active": True,
+                    "freq_mhz": 5865.0, "until_ts": 723, "error": None}
+    p.publish_view(124, False, error="ffmpeg exited")
+    data2 = p._client.published[1][1]
+    assert data2["active"] is False and data2["error"] == "ffmpeg exited"

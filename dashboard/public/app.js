@@ -4,6 +4,7 @@ import { splitByKind, renderSpectrum, classColor, fmtFreq } from '/spectrum.js';
 import { diffNewKeys, SoundAlerter } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
+import { galleryHtml, buildFramesQuery, toLocalDatetime } from '/frames-gallery.js';
 
 let cfg = null;
 const players = new Map(); // id -> { player } | { player: null, starting: true }
@@ -25,16 +26,39 @@ spectrumPanel.addEventListener('click', (e) => {
     scanClient.publishCommand(sid, { mode: modeBtn.dataset.rxmode });
     return;
   }
-  // Click the 5.8 spectrum -> tune the nearest channel (manual)
-  const canvas = e.target.closest('canvas.tunable');
+  // Click a spectrum chart -> fill the SDR view frequency field; on 5.8G also
+  // tune the RX5808 to the nearest channel (previous behavior kept).
+  const canvas = e.target.closest('canvas.freqpick');
   if (canvas && sid) {
     const rect = canvas.getBoundingClientRect();
     const lo = Number(canvas.dataset.lowMhz);
     const hi = Number(canvas.dataset.highMhz);
     const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
     const freq = lo + (x / rect.width) * (hi - lo);
-    const ch = nearestRxChannel(freq);
-    if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
+    const inp = scanBlock.querySelector('.view-freq');
+    if (inp) inp.value = String(Math.round(freq));
+    if (canvas.classList.contains('tunable')) {
+      const ch = nearestRxChannel(freq);
+      if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
+    }
+    return;
+  }
+  // SDR view start/stop buttons
+  const vbtn = e.target.closest('[data-viewact]');
+  if (vbtn && sid) {
+    if (vbtn.dataset.viewact === 'stop') {
+      scanClient.publishView(sid, 'stop');
+    } else {
+      const inp = scanBlock.querySelector('.view-freq');
+      const f = Number(inp && inp.value);
+      if (Number.isFinite(f) && f >= 100 && f <= 6000) scanClient.publishView(sid, 'start', f);
+    }
+    return;
+  }
+  // ▶ on a detection row -> start the SDR view at that frequency
+  const vfreq = e.target.closest('[data-viewfreq]');
+  if (vfreq && sid) {
+    scanClient.publishView(sid, 'start', Number(vfreq.dataset.viewfreq));
     return;
   }
 
@@ -103,6 +127,7 @@ document.getElementById('logout').addEventListener('click', async () => {
 });
 document.getElementById('add-device').addEventListener('click', openAddForm);
 document.getElementById('journal-btn').addEventListener('click', openJournal);
+document.getElementById('frames-btn').addEventListener('click', openFrames);
 document.getElementById('restart-all').addEventListener('click', restartAll);
 
 // ---- reusable form/creds modal ----
@@ -118,6 +143,26 @@ formModal.addEventListener('click', (e) => {
     copyText(pre.textContent, copyBtn);
   }
   if (e.target.closest('#journal-refresh')) openJournal();
+  if (e.target.closest('#frames-refresh')) openFrames();
+  const frTile = e.target.closest('.fr-tile');
+  if (frTile) openImageModal(frTile.dataset.src, frTile.dataset.cap);
+  if (e.target.closest('#frames-more')) fetchFrames({ append: true });
+  const tp = e.target.closest('[data-tp]');
+  if (tp) {
+    const hours = { '1h': 1, '24h': 24, '7d': 168 }[tp.dataset.tp];
+    framesFilter.from = hours ? toLocalDatetime(Date.now() - hours * 3600e3) : '';
+    framesFilter.to = '';
+    fetchFrames();
+  }
+});
+
+// Frames-gallery filters: any change updates the state and re-fetches from the server.
+formModal.addEventListener('change', (e) => {
+  const key = {
+    'frames-scanner': 'scanner', 'frames-band': 'band', 'frames-standard': 'standard',
+    'frames-snr': 'snrMin', 'frames-from': 'from', 'frames-to': 'to',
+  }[e.target.id];
+  if (key) { framesFilter[key] = e.target.value; fetchFrames(); }
 });
 
 async function copyText(text, btn) {
@@ -236,7 +281,17 @@ function renderScan() {
   if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
   prevScanKeys = Object.keys(store).length ? keys : null;
   spectrumPanel.classList.remove('hidden');
+  // Preserve typed SDR-view frequencies across the full panel re-render.
+  const typed = {};
+  for (const inp of spectrumPanel.querySelectorAll('[data-scanner-id] .view-freq')) {
+    const b = inp.closest('[data-scanner-id]');
+    if (b && inp.value) typed[b.dataset.scannerId] = inp.value;
+  }
   renderSpectrum(spectrumPanel, scanners, store, new Set(newKeys));
+  for (const [vid, val] of Object.entries(typed)) {
+    const inp = spectrumPanel.querySelector(`[data-scanner-id="${vid}"] .view-freq`);
+    if (inp && !inp.value) inp.value = val;
+  }
 }
 
 async function startPlayer(d) {
@@ -484,6 +539,33 @@ async function openJournal() {
   } catch { /* show empty on failure */ }
   showModal(journalHtml(events));
 }
+
+// ---- frames gallery (server archive of demodulated frames) ----
+// Filter state survives modal close/open; resets on page reload. The server
+// does all filtering — every change re-fetches; «Ще» appends older frames.
+const FRAMES_LIMIT = 200;
+let framesFilter = { scanner: '', band: '', standard: '', snrMin: '', from: '', to: '' };
+let framesList = [];
+let framesHasMore = false;
+
+async function fetchFrames({ append = false } = {}) {
+  const extra = { limit: FRAMES_LIMIT };
+  if (append && framesList.length) extra.before = framesList[framesList.length - 1].ts;
+  let batch = [];
+  try {
+    const res = await fetch(`/api/frames?${buildFramesQuery(framesFilter, extra)}`);
+    if (res.ok) batch = await res.json();
+  } catch { /* render what we have */ }
+  framesList = append ? framesList.concat(batch) : batch;
+  framesHasMore = batch.length === FRAMES_LIMIT;
+  showModal(galleryHtml(framesList, {
+    filter: framesFilter,
+    scanners: scannersFromRegistry.map((s) => s.id),
+    hasMore: framesHasMore,
+  }));
+}
+
+function openFrames() { fetchFrames(); }
 
 // ---- live updates ----
 function connectSSE() {

@@ -14,6 +14,14 @@ class VideoConfig:
     default_fs: float = 16_000_000.0
     video_enabled: bool = True
     emit_cooldown_s: float = 10.0
+    # SDR live-view stream (manual mode)
+    view_enabled: bool = False
+    view_push_url: str = ""
+    view_sample_rate_hz: float = 8_000_000.0
+    view_max_s: float = 600.0
+    view_width: int = 480
+    view_fps: float = 15.0
+    view_standard: str = "auto"          # auto | pal | ntsc
 
 
 def load_video_config(env=None):
@@ -40,4 +48,17 @@ def load_video_config(env=None):
         c.video_enabled = env["FPV_VIDEO_ENABLED"].strip().lower() not in ("0", "false", "no", "")
     if "FPV_EMIT_COOLDOWN_S" in env:
         c.emit_cooldown_s = float(env["FPV_EMIT_COOLDOWN_S"])
+    if "VIEW_ENABLED" in env:
+        c.view_enabled = env["VIEW_ENABLED"].strip().lower() not in ("0", "false", "no", "")
+    c.view_push_url = env.get("VIEW_PUSH_URL", c.view_push_url)
+    if "VIEW_SAMPLE_RATE_HZ" in env:
+        c.view_sample_rate_hz = float(env["VIEW_SAMPLE_RATE_HZ"])
+    if "VIEW_MAX_S" in env:
+        c.view_max_s = float(env["VIEW_MAX_S"])
+    if "VIEW_WIDTH" in env:
+        c.view_width = int(env["VIEW_WIDTH"])
+    if "VIEW_FPS" in env:
+        c.view_fps = float(env["VIEW_FPS"])
+    if "VIEW_STANDARD" in env:
+        c.view_standard = env["VIEW_STANDARD"].strip().lower()
     return c

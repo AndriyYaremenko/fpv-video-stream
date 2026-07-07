@@ -9,6 +9,7 @@ import { renderConfig } from '../lib/render-config.js';
 import { buildRtspPush, buildSrtPush } from '../lib/push-command.js';
 import { fetchPaths } from '../lib/mtx-api.js';
 import { DetectionJournal } from '../lib/detection-journal.js';
+import { FrameArchive } from '../lib/frame-archive.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +69,30 @@ export function createApp({ registry, getPaths, config }) {
   app.get('/api/detections', requireAuth, (req, res) => {
     const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 200));
     res.json(config.journal ? config.journal.events(limit) : []);
+  });
+
+  app.get('/api/frames', requireAuth, (req, res) => {
+    if (!config.frames) return res.json([]);
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 200));
+    res.json(config.frames.list({
+      scanner: String(req.query.scanner || ''),
+      since: Number(req.query.since) || 0,
+      until: Number(req.query.until) || 0,
+      before: Number(req.query.before) || 0,
+      fmin: Number(req.query.fmin) || 0,
+      fmax: Number(req.query.fmax) || 0,
+      snrMin: Number(req.query.snr_min) || 0,
+      standard: String(req.query.standard || ''),
+      limit,
+    }));
+  });
+
+  // Frame id is "<scanner>/<tsMs>_<centerMhz>"; the archive validates both
+  // segments (no path traversal) and 404s ids that were pruned.
+  app.get('/api/frames/:scanner/:file', requireAuth, (req, res) => {
+    const path = config.frames ? config.frames.filePath(req.params.scanner, req.params.file) : null;
+    if (!path) return res.status(404).json({ error: 'frame not found' });
+    res.sendFile(path);
   });
 
   app.get('/api/devices', requireAuth, async (req, res) => {
@@ -208,28 +233,39 @@ export async function start() {
     max: Number(env.DETECTIONS_MAX || 2000),
   });
   config.journal = journal;
+  const frames = new FrameArchive({
+    dir: env.FRAMES_DIR || join(dirname(mediamtxConfig), 'frames'),
+    indexFile: env.FRAMES_INDEX_FILE || join(dirname(mediamtxConfig), 'frames-index.json'),
+    max: Number(env.FRAMES_MAX || 20000),
+  });
+  config.frames = frames;
+  const framesMaxAgeMs = Number(env.FRAMES_RETENTION_DAYS || 7) * 24 * 60 * 60 * 1000;
+  frames.prune(Date.now(), framesMaxAgeMs);               // catch up after downtime
+  setInterval(() => frames.prune(Date.now(), framesMaxAgeMs), 30 * 60 * 1000).unref();
   try {
     const mqtt = (await import('mqtt')).default;
     const client = mqtt.connect(env.MQTT_TCP_URL || 'mqtt://127.0.0.1:1883', {
       username: config.mqtt.user, password: config.mqtt.pass, reconnectPeriod: 5000,
     });
     let lastWarn = 0;
-    client.on('connect', () => client.subscribe('fpv/+/detection'));
+    client.on('connect', () => client.subscribe(['fpv/+/detection', 'fpv/+/video']));
     client.on('message', (topic, buf) => {
-      const m = /^fpv\/([^/]+)\/detection$/.exec(topic);
+      const m = /^fpv\/([^/]+)\/(detection|video)$/.exec(topic);
       if (!m) return;
       let payload;
       try { payload = JSON.parse(buf.toString()); } catch { return; }
       try {
-        journal.ingest(m[1], payload);            // never crash the server on a bad message
+        // never crash the server on a bad message
+        if (m[2] === 'detection') journal.ingest(m[1], payload);
+        else frames.ingest(m[1], payload);
       } catch (e) {
         const now = Date.now();
-        if (now - lastWarn > 60000) { lastWarn = now; console.warn('journal ingest error:', e.message); }
+        if (now - lastWarn > 60000) { lastWarn = now; console.warn(`${m[2]} ingest error:`, e.message); }
       }
     });
-    client.on('error', (e) => console.error('journal mqtt error:', e.message));
+    client.on('error', (e) => console.error('scan mqtt error:', e.message));
   } catch (e) {
-    console.error('journal MQTT init failed; serving without live journal:', e.message);
+    console.error('scan MQTT init failed; serving without live journal/frames:', e.message);
   }
   const app = createApp({ registry, getPaths: () => fetchPaths(apiBase), config });
   const host = env.DASH_HOST || '10.8.0.1';

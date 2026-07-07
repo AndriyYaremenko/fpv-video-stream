@@ -28,8 +28,8 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .tile-meta small { color:#cbd5e1; }
 .tile-stats, .tile-telemetry { font-size:.75rem; color:#cbd5e1; }
 
-/* fullscreen viewer */
-.modal { position:fixed; inset:0; background:rgba(0,0,0,.9); display:flex; align-items:center; justify-content:center; flex-direction:column; z-index:50; }
+/* fullscreen viewer — above .modal2(60): gallery tiles open it over the card */
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.9); display:flex; align-items:center; justify-content:center; flex-direction:column; z-index:70; }
 .modal.hidden { display:none; }
 .modal video { max-width:92vw; max-height:82vh; background:#000; }
 .modal-caption { margin-top:.6rem; color:var(--text); }
@@ -122,3 +122,24 @@ body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); colo
 .jr-table { max-height:60vh; display:block; overflow:auto; }
 .jr-app { color:#3ddc84; font-weight:600; }
 .jr-gone { color:#9aa4b2; }
+
+/* frames gallery modal */
+.fr-filters { display:flex; flex-direction:column; gap:.4rem; margin:.2rem 0 .8rem; }
+.fr-toolbar { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; color:#cbd5e1; font-size:.85rem; }
+.fr-toolbar label { display:flex; align-items:center; gap:.3rem; }
+.fr-toolbar select, .fr-toolbar input { background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; font:inherit; padding:.15rem .3rem; }
+.fr-toolbar input[type="number"] { width:4.5rem; }
+.fr-more { display:flex; justify-content:center; margin:.6rem 0 0; }
+.fr-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:.6rem; max-height:60vh; overflow:auto; }
+.fr-tile { background:#0c1118; border:1px solid var(--line); border-radius:6px; padding:.35rem; cursor:pointer; display:flex; flex-direction:column; gap:.3rem; text-align:left; }
+.fr-tile img { width:100%; border-radius:4px; background:#000; image-rendering:pixelated; }
+.fr-cap { color:#9aa4b2; font-size:.72rem; line-height:1.25; }
+
+/* SDR live-view controls (scanner block) */
+.sdr-view-ctl { display:flex; gap:.4rem; align-items:center; margin:.3rem 0; font-size:.8rem; color:#cbd5e1; flex-wrap:wrap; }
+.sdr-view-ctl .view-freq { width:5.5rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; font:inherit; padding:.15rem .3rem; }
+.sdr-view-ctl button { font-size:.75rem; background:#0c1118; color:#cfd6e0; border:1px solid var(--line); border-radius:4px; cursor:pointer; padding:.15rem .5rem; }
+.sdr-view-ctl button:disabled { opacity:.4; cursor:default; }
+.sdr-view-ctl .view-badge { color:#39d0ff; font-weight:600; }
+.sdr-view-ctl .view-err { color:#f87171; }
+.band-cell .chart-line.freqpick { cursor:crosshair; }

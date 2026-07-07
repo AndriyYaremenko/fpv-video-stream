@@ -1,4 +1,14 @@
-from config import load_config
+from config import load_config, parse_bands
+
+
+def test_scan_bands_parse_and_env_override():
+    assert parse_bands("B1:900-2200,B2:2200-3400") == {"B1": (900.0, 2200.0), "B2": (2200.0, 3400.0)}
+    # malformed entries are skipped, valid ones kept
+    assert parse_bands("good:100-200, bad, x:notnum-300") == {"good": (100.0, 200.0)}
+    c = load_config({"SCAN_BANDS": "L:900-3450,H:3450-6000"})
+    assert c.bands == {"L": (900.0, 3450.0), "H": (3450.0, 6000.0)}
+    # a fully-unparseable value leaves the default 3 bands intact
+    assert set(load_config({"SCAN_BANDS": "garbage"}).bands.keys()) == {"1.2G", "2.4G", "5.8G"}
 
 
 def test_defaults():
