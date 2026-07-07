@@ -104,7 +104,7 @@ RX5808 command branch untouched; command/topic schema unchanged.
   (`{view:'stop'}`).
 
 ### Minor
-- `mqtt-scan.js`: the `stream` field flows through the existing `fpv/+/view` reduce unchanged.
+- `mqtt-scan.js`: the view reduce copies the new stream field (stream: data.stream || null).
 - `index.html`/`style.css`: panel markup — list left, player right; stacks vertically on narrow
   screens.
 - `app.js`: render the panel in the existing render cycle, click delegation, journal seed fetch.

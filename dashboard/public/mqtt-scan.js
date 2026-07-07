@@ -66,6 +66,7 @@ export function reduce(store, topic, payload, opts = {}) {
       freq_mhz: data.freq_mhz == null ? null : Number(data.freq_mhz),
       until_ts: data.until_ts == null ? null : Number(data.until_ts),
       error: data.error || null,
+      stream: data.stream || null,
     };
   } else if (kind === 'spectrum') {
     for (const b of (data.bands || [])) {

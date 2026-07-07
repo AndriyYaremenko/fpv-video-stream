@@ -81,14 +81,17 @@ test('buildCommand shapes mode + channel', () => {
   assert.deepEqual(buildCommand('scan'), { mode: 'scan', channel: null });
 });
 
-test('reduce: fpv/<id>/view updates the view state', () => {
+test('reduce: fpv/<id>/view updates the view state incl. stream', () => {
   const s = reduce(emptyStore(), 'fpv/hackrf/view', JSON.stringify({
-    scanner_id: 'hackrf', ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null,
+    scanner_id: 'hackrf', ts: 5, active: true, freq_mhz: 5865, until_ts: 605,
+    error: null, stream: 'hackrf-view',
   }));
-  assert.deepEqual(s.hackrf.view, { ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null });
+  assert.deepEqual(s.hackrf.view,
+    { ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null, stream: 'hackrf-view' });
   reduce(s, 'fpv/hackrf/view', JSON.stringify({ ts: 6, active: false, error: 'ffmpeg exited' }));
   assert.equal(s.hackrf.view.active, false);
   assert.equal(s.hackrf.view.freq_mhz, null);
+  assert.equal(s.hackrf.view.stream, null);       // absent field -> null (old agents)
   assert.equal(s.hackrf.view.error, 'ffmpeg exited');
 });
 
