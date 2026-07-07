@@ -168,3 +168,9 @@ test('playerKey changes on session restart and is empty when inactive', () => {
   assert.equal(playerKey({ active: false }, 'hackrf-view'), '');
   assert.equal(playerKey(null, 'hackrf-view'), '');
 });
+
+test('viewerListHtml rounds SNR to one decimal', () => {
+  const rows = [{ key: 'k', band: 'B3', center_mhz: 3410, channel: null, class: 'analog',
+    snr_db: 52.72184943844118, power_dbm: -50, scanners: { b: 100 }, seen_by: { b: true }, last_seen: 100, live: true }];
+  assert.match(viewerListHtml(rows, 100), /52\.7 dB/);
+});

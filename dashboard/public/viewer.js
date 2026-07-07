@@ -136,7 +136,7 @@ export function viewerListHtml(rows, nowS, activeFreq = null, canView = true) {
       <td>${freq}</td>
       <td>${escapeHtml(e.band || '')}</td>
       <td><span class="cls" style="color:${classColor(e.class)}">${escapeHtml(e.class || '')}</span></td>
-      <td>${e.snr_db == null ? '—' : escapeHtml(String(e.snr_db))} dB</td>
+      <td>${e.snr_db == null ? '—' : Number(e.snr_db).toFixed(1)} dB</td>
       <td>${src || '—'}</td>
       <td>${e.live ? 'зараз' : ageLabel(nowS, e.last_seen)}</td></tr>`;
   }).join('');
