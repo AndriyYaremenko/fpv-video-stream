@@ -433,6 +433,19 @@ def test_run_cycle_aborts_between_dwells_after_band_sweep(tmp_path):
     assert pub.detections == []           # aggregate publish skipped
 
 
+def test_run_cycle_aborts_before_loose_carrier_demods(tmp_path):
+    _write_narrow_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    pub = _FakePub()
+    em = _FakeEmitter()
+    answers = iter([False])                        # band-loop check passes, then abort
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=pub, emitter=em,
+                             abort=lambda: next(answers, True))
+    assert payload is None
+    assert em.calls == []                           # no extra dwell ran after the abort
+    assert pub.detections == []
+
+
 def test_main_skips_holder_update_when_cycle_aborts(monkeypatch):
     cfg = Config()
     cfg.source = "replay"
@@ -460,3 +473,66 @@ def test_main_skips_holder_update_when_cycle_aborts(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         main.main()
     assert holders[0].payload == "sentinel"    # None never overwrote the holder
+
+
+def test_main_enters_pending_view_without_the_idle_sleep(monkeypatch):
+    # A view command that lands in the cycle's tail (after the last abort checkpoint)
+    # must be entered right after the completed cycle — without the 1 s idle sleep.
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "hackrf"
+    cfg.mqtt_enabled = True
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+
+    class _FakePublisher:
+        def __init__(self, *a, **k):
+            self.on_command = None
+            self.on_view_command = None
+            self.on_connected = None
+        def connect(self, ts): pass
+        def publish_view(self, *a, **k): pass
+    monkeypatch.setattr(main, "MqttPublisher", _FakePublisher)
+
+    monkeypatch.setenv("VIEW_ENABLED", "1")
+    monkeypatch.setenv("VIEW_PUSH_URL", "rtsp://u:p@h:8554/hackrf-view")
+    monkeypatch.setenv("FPV_VIDEO_ENABLED", "0")     # no emitter
+
+    class _FakeView:
+        def __init__(self, *a, **k):
+            self.pending_flag = False
+            self.entered = []
+        def set_command(self, d): pass
+        def announce(self): pass
+        def has_pending(self): return self.pending_flag
+        def pending(self):
+            if self.pending_flag:
+                self.pending_flag = False
+                return 5865.0
+            return None
+        def run_view(self, freq): self.entered.append(freq)
+    import view_controller as vc_mod
+    fakes = []
+    def _mk(*a, **k):
+        fakes.append(_FakeView())
+        return fakes[-1]
+    monkeypatch.setattr(vc_mod, "ViewController", _mk)
+
+    calls = [0]
+    def _cycle(*a, **k):
+        calls[0] += 1
+        if calls[0] == 1:
+            fakes[0].pending_flag = True      # command arrives in the cycle's tail
+            return {"ok": True}
+        raise KeyboardInterrupt()             # end the test loop
+    monkeypatch.setattr(main, "run_cycle", _cycle)
+
+    sleeps = []
+    monkeypatch.setattr(main.time, "sleep", lambda s: sleeps.append(s))
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()
+
+    assert fakes and fakes[0].entered == [5865.0]   # the pending view WAS entered
+    assert sleeps == []                             # ...without the 1 s idle sleep first

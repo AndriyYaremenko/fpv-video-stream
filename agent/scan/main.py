@@ -167,6 +167,9 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
             done = {round(c.center_mhz, 1) for c in cands[:budget]}
             extra = 0
             for c in loose:
+                if abort is not None and abort():
+                    LOG.info("scan cycle aborted mid-band %s (view pending)", band)
+                    return None
                 if extra >= _MAX_CARRIER_DEMODS_PER_BAND:
                     break
                 key = round(c.center_mhz, 1)
@@ -305,6 +308,8 @@ def main() -> None:
             holder.payload = payload
             backoff = 1.0
             blade_fails = 0
+            if view is not None and view.has_pending():
+                continue    # completed cycle already published; enter the pending view now
         except Exception:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
             # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF
