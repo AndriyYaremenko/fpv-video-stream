@@ -28,6 +28,21 @@ def test_plan_windows_rejects_bad_input():
     assert plan_windows(100.0, 200.0, 0.0) == []
 
 
+def test_plan_windows_never_tunes_past_band_top():
+    # B4 is 4700-6000 and the bladeRF tops out at EXACTLY 6 GHz: the unclamped last
+    # center was 6005 -> set_frequency RangeError killed every sweep cycle on hardware.
+    centers = plan_windows(4700.0, 6000.0, 30.0)
+    assert max(centers) <= 6000.0 - 15.0              # center stays a half-window below top
+    assert max(centers) + 15.0 >= 6000.0              # ...but the last window still covers the top edge
+    assert centers == sorted(set(centers))            # ascending, no duplicates from clamping
+
+
+def test_plan_windows_band_narrower_than_window_gets_mid_center():
+    # A 10 MHz band with a 30 MHz window must tune the BAND middle, not low + window/2
+    # (which would sit outside the band).
+    assert plan_windows(100.0, 110.0, 30.0) == [105.0]
+
+
 def test_window_spectrum_peaks_at_signal_frequency():
     fs = 40_000_000.0
     center = 5_800_000_000.0
@@ -113,6 +128,7 @@ def test_bladerf_device_retunes_and_converts():
         def sync_rx(self, buf, n):
             # two samples: (2048,0) -> 1+0j, (0,2048) -> 0+1j
             buf[:] = np.array([2048, 0, 0, 2048], dtype="int16").tobytes()
+        def close(self): events.append(("close",))
 
     dev = bs.BladerfDevice(_FakeRadio(), channel="RX0", gain_db=30, bandwidth_hz=18_000_000.0,
                            gain_mode="manual", layout="RX_X1", fmt="SC16_Q11")
@@ -132,8 +148,8 @@ def test_bladerf_device_retunes_and_converts():
     dev.capture(5_800_000_000.0, 40_000_000.0, 2)
     assert events.count(("sr", 40_000_000)) == 1
     assert events.count(("enable", True)) == 1
-    # close() disables the module AND clears the enabled flag, so a later capture re-enables.
+    # close() disables the module AND releases the radio handle: a leaked handle made
+    # every reopen in the same process fail with NoDevError after a device error.
     dev.close()
     assert ("enable", False) in events
-    dev.capture(5_800_000_000.0, 40_000_000.0, 2)
-    assert events.count(("enable", True)) == 2      # re-enabled after close
+    assert ("close",) in events

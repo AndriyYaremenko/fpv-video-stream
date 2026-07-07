@@ -35,13 +35,22 @@ def welch_psd(iq: np.ndarray, seg: int = 1024) -> np.ndarray:
 
 
 def plan_windows(low_mhz: float, high_mhz: float, window_mhz: float) -> list[float]:
-    """Window center frequencies (MHz) that tile [low, high] in `window_mhz` steps."""
+    """Window center frequencies (MHz) that tile [low, high] in `window_mhz` steps.
+    Centers are clamped to high - window/2 so the device is never tuned past the band
+    top: a 4700-6000 band would otherwise end on a 6005 center, and the bladeRF tops
+    out at exactly 6 GHz (set_frequency RangeError). A band narrower than one window
+    gets a single center in the band middle."""
     if high_mhz <= low_mhz or window_mhz <= 0:
         return []
+    half = window_mhz / 2.0
+    if high_mhz - low_mhz <= window_mhz:
+        return [round((low_mhz + high_mhz) / 2.0, 3)]
     centers = []
-    c = low_mhz + window_mhz / 2.0
-    while c - window_mhz / 2.0 < high_mhz:
-        centers.append(round(c, 3))
+    c = low_mhz + half
+    while c - half < high_mhz:
+        v = round(min(c, high_mhz - half), 3)
+        if not centers or centers[-1] != v:
+            centers.append(v)
         c += window_mhz
     return centers
 
@@ -128,6 +137,13 @@ class BladerfDevice:
                 self._enabled = False
         except Exception:
             LOG.exception("bladeRF disable failed")
+        finally:
+            # Release the libusb handle too: a leaked open handle makes every reopen in
+            # the same process fail with NoDevError until the process is restarted.
+            try:
+                self._radio.close()
+            except Exception:
+                LOG.exception("bladeRF close failed")
 
 
 def open_bladerf_capture(gain_db, bandwidth_hz) -> BladerfDevice:
