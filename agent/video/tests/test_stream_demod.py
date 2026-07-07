@@ -280,3 +280,23 @@ def test_writer_loop_logs_stats_line(caplog):
                     dropped_chunks=lambda: 7, clock=clock)
     lines = [r.getMessage() for r in caplog.records if "dropped_chunks" in r.getMessage()]
     assert lines and "dropped_chunks=7" in lines[0] and "queue=" in lines[0]
+
+
+def test_run_stream_writes_every_selected_frame_of_a_chunk():
+    # One full chunk then EOF: the writer must drain the ENTIRE select budget
+    # (chunk_s * fps frames) before run_stream returns — no air lost to pacing.
+    fs = 4e6
+    procs = []
+
+    def popen(cmd, **kw):
+        p = _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs))) if cmd[0] == "hackrf_transfer" else _FakeProc()
+        procs.append(p)
+        return p
+
+    t = [0.0]
+    err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=60.0, popen=popen,
+                     clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert err == "hackrf_transfer exited"
+    frame_size = 320 * 288
+    budget = int(round(CHUNK_S * 10.0))            # _vcfg() fps = 10 -> 5 frames
+    assert len(procs[1].stdin.getvalue()) == budget * frame_size
