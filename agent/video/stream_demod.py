@@ -4,6 +4,7 @@ Pure pieces (unit-tested): command builders, standard pick with PAL fallback,
 row resize, chunk->frames. The subprocess pipeline (run_stream) is added on top
 and kept as thin as possible."""
 import logging
+from collections import deque
 
 import numpy as np
 
@@ -90,6 +91,50 @@ class ChunkMailbox:
         with self._lock:
             buf, self._buf = self._buf, None
             return buf
+
+
+class FrameQueue:
+    """Bounded frame FIFO between the demod loop and the writer thread.
+    put() never blocks: when full, the OLDEST frame is dropped (the live tail
+    matters more than stale frames). close() marks end-of-stream: get() drains
+    the remainder, then returns None."""
+
+    def __init__(self, maxlen):
+        self.maxlen = max(1, int(maxlen))
+        self.dropped = 0
+        self._d = deque()
+        self._cond = threading.Condition()
+        self._closed = False
+
+    def __len__(self):
+        with self._cond:
+            return len(self._d)
+
+    @property
+    def closed(self):
+        with self._cond:
+            return self._closed
+
+    def put(self, frame):
+        with self._cond:
+            if len(self._d) >= self.maxlen:
+                self._d.popleft()
+                self.dropped += 1
+            self._d.append(frame)
+            self._cond.notify()
+
+    def get(self, timeout=0.1):
+        with self._cond:
+            if not self._d and not self._closed:
+                self._cond.wait(timeout)
+            if self._d:
+                return self._d.popleft()
+            return None
+
+    def close(self):
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
 
 
 def select_frames(frames, chunk_s, fps):

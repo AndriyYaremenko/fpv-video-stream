@@ -187,3 +187,25 @@ def test_chunk_mailbox_counts_overwrites():
     mb.put(b"c")                     # unconsumed "b" is replaced -> 1 dropped chunk
     assert mb.dropped == 1
     assert mb.take() == b"c"
+
+
+from stream_demod import FrameQueue
+
+
+def test_frame_queue_fifo_and_drop_oldest():
+    q = FrameQueue(maxlen=2)
+    q.put(b"1"); q.put(b"2")
+    assert len(q) == 2 and q.dropped == 0
+    q.put(b"3")                       # full: "1" (oldest) is dropped
+    assert q.dropped == 1
+    assert q.get() == b"2" and q.get() == b"3"
+    assert q.get(timeout=0.01) is None            # empty, not closed -> timeout
+
+
+def test_frame_queue_close_drains_then_none():
+    q = FrameQueue(maxlen=4)
+    q.put(b"a"); q.put(b"b")
+    q.close()
+    assert q.closed
+    assert q.get() == b"a" and q.get() == b"b"    # close still drains the tail
+    assert q.get(timeout=0.01) is None            # drained -> end of stream
