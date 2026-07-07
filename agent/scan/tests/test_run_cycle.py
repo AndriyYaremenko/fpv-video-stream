@@ -407,3 +407,56 @@ def test_run_cycle_demods_carrier_in_non_5_8_band(tmp_path):
     assert any(abs(center - 3470) <= 2 for _, center, _ in em.calls)
     # ...but it is NOT fed to the RX5808 (out of its 5.8 GHz range)
     assert ctl.targets == []
+
+
+def test_run_cycle_aborts_immediately_when_abort_is_true(tmp_path):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    pub = _FakePub()
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=pub, abort=lambda: True)
+    assert payload is None
+    assert pub.spectra == [] and pub.detections == []
+
+
+def test_run_cycle_aborts_between_dwells_after_band_sweep(tmp_path):
+    # First abort check (top of the band loop) passes; the pending view arrives
+    # "mid-band": the band's spectrum is already published, but the cycle returns
+    # None and never publishes detections.
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    pub = _FakePub()
+    answers = iter([False])
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=pub,
+                             abort=lambda: next(answers, True))
+    assert payload is None
+    assert len(pub.spectra) == 1          # band already swept/published before the abort
+    assert pub.detections == []           # aggregate publish skipped
+
+
+def test_main_skips_holder_update_when_cycle_aborts(monkeypatch):
+    cfg = Config()
+    cfg.source = "replay"
+    cfg.mqtt_enabled = False
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+
+    holders = []
+    class _H:
+        def __init__(self):
+            self.payload = "sentinel"
+            holders.append(self)
+    monkeypatch.setattr(main, "Holder", _H)
+
+    calls = [0]
+    def _cycle(*a, **k):
+        calls[0] += 1
+        if calls[0] == 1:
+            return None                   # aborted cycle
+        raise KeyboardInterrupt()         # stop the loop on the 2nd iteration
+    monkeypatch.setattr(main, "run_cycle", _cycle)
+    monkeypatch.setattr(main.time, "sleep", lambda s: None)
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()
+    assert holders[0].payload == "sentinel"    # None never overwrote the holder
