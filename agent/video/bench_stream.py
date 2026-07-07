@@ -6,6 +6,7 @@ On the Pi 5 (no checkout change — the script travels over stdin):
       '/opt/fpv-video-stream/agent/scan/.venv/bin/python - --fs 8e6' \
       < agent/video/bench_stream.py
 Gate: "x realtime" <= ~1.0 means the Pi keeps up with live streaming.
+--pipeline gate: dropped_chunks=0 (chunks fed at the real-time rate must all be demodulated).
 """
 import argparse
 import os
@@ -48,12 +49,18 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
     stop = threading.Event()
     err = {"msg": None}
     written = [0]
+    first_write = [None]
 
     class _Enc:
         def poll(self):
             return None
 
-    pacer = FramePacer(fps, lambda fr: written.__setitem__(0, written[0] + 1))
+    def _sink(fr):
+        if first_write[0] is None:
+            first_write[0] = time.perf_counter()
+        written[0] += 1
+
+    pacer = FramePacer(fps, _sink)
     writer = threading.Thread(target=writer_loop, args=(q, pacer, _Enc(), stop, err),
                               kwargs={"dropped_chunks": lambda: mailbox.dropped},
                               daemon=True)
@@ -71,9 +78,11 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
 
     t0 = time.perf_counter()
     height = VIEW_HEIGHT["PAL"]
-    while not (done.is_set() and mailbox.take() is None):
+    while True:
         buf = mailbox.take()
         if buf is None:
+            if done.is_set():
+                break
             time.sleep(0.005)
             continue
         iq = iq_from_int8_dweller(buf)
@@ -83,7 +92,7 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
     q.close()
     writer.join(timeout=int(fps) / fps + 2.0)
     stop.set()
-    dur = time.perf_counter() - t0
+    dur = time.perf_counter() - (first_write[0] if first_write[0] is not None else t0)
     print(f"pipeline fs={fs / 1e6:.1f}MS/s rounds={rounds} width={width} fps={fps}")
     print(f"dropped_chunks={mailbox.dropped} dropped_frames={q.dropped} "
           f"avg_fps={written[0] / dur:.1f} (gate: dropped_chunks=0)")
