@@ -8,6 +8,9 @@ Type=simple
 WorkingDirectory=/opt/fpv-video-stream/agent/scan
 Environment=SCAN_ID=scan-01
 Environment=SCAN_SOURCE=live
+# SDR backend: "bladerf" (default in config.py) drives a bladeRF 2.0 micro; "hackrf"
+# falls back to hackrf_sweep/hackrf_transfer. See docs/bladerf-scanner-deploy.md.
+Environment=SCAN_SDR=bladerf
 Environment=SCAN_STATE_PATH=/run/fpv-scan/scan.json
 # MQTT broker (scan data over WireGuard). Host is non-secret; the publish creds
 # (MQTT_PUB_USER=pub, MQTT_PUB_PASS=...) are secret — put them in /etc/fpv-scan.env

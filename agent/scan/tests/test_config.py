@@ -104,3 +104,27 @@ def test_rx5808_osd_file_default_and_env():
     assert c.rx5808_osd_file == "/run/fpv/rx5808.txt"
     c2 = load_config({"FPV_RX_OSD_FILE": "/tmp/osd.txt"})
     assert c2.rx5808_osd_file == "/tmp/osd.txt"
+
+
+def test_sdr_backend_defaults_and_env():
+    c = load_config({})
+    assert c.sdr == "bladerf"
+    assert c.bladerf_sample_rate_hz == 40_000_000.0
+    assert c.bladerf_bandwidth_hz == 40_000_000.0
+    assert c.bladerf_window_mhz == 30.0
+    assert c.bladerf_sweep_samples == 65_536
+    assert c.bladerf_gain_db == 40
+    c2 = load_config({
+        "SCAN_SDR": "hackrf",
+        "BLADERF_SAMPLE_RATE": "20000000",
+        "BLADERF_BANDWIDTH": "18000000",
+        "BLADERF_WINDOW_MHZ": "15",
+        "BLADERF_SWEEP_SAMPLES": "32768",
+        "BLADERF_GAIN": "30",
+    })
+    assert c2.sdr == "hackrf"
+    assert c2.bladerf_sample_rate_hz == 20_000_000.0
+    assert c2.bladerf_bandwidth_hz == 18_000_000.0
+    assert c2.bladerf_window_mhz == 15.0
+    assert c2.bladerf_sweep_samples == 32768
+    assert c2.bladerf_gain_db == 30
