@@ -129,8 +129,8 @@ test('viewerListHtml renders clickable rows with band/freq data attrs', () => {
   const html = viewerListHtml(rows, 100, 4240, true);
   assert.match(html, /data-vwfreq="4240" data-vwband="4\.9G"/);
   assert.match(html, /data-vwfreq="5865" data-vwband="5\.8G"/);
-  assert.match(html, /is-viewing/);              // 4240 row highlighted (active view)
-  assert.match(html, /vw-recent/);               // 5865 row dimmed
+  assert.match(html, /<tr class="is-viewing" data-vwfreq="4240" data-vwband="4\.9G">/);  // active row highlighted
+  assert.match(html, /<tr class="vw-recent" data-vwfreq="5865" data-vwband="5\.8G">/);   // recent row dimmed
   assert.match(html, /5865 МГц \(A1\)/);
   assert.match(html, /1 хв тому/);
   assert.match(html, /bladerf/);
