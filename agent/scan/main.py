@@ -93,7 +93,7 @@ def _downsample(spec: Spectrum, points: int = 64) -> list:
 
 
 def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller=None,
-              abort=None) -> dict:
+              abort=None) -> dict | None:
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
