@@ -113,7 +113,14 @@ def _vcfg():
     return c
 
 
+import functools
+import time as _t
+
+
+@functools.lru_cache(maxsize=4)
 def _chunk_bytes(fs, seconds=CHUNK_S):
+    # Cached: the CVBS synth + FM modulation cost seconds per call and several
+    # run_stream tests request the identical chunk. bytes are immutable — safe to share.
     img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
     bb = make_cvbs("PAL", img, fs, frames=max(1, int(round(seconds * 25))))
     raw = to_int8(fm_modulate(bb, fs, 2e6))
@@ -159,7 +166,8 @@ def test_run_stream_times_out():
 
     class _Endless:                                  # capture never EOFs: timeout must end it
         def read(self, n):
-            return chunk
+            _t.sleep(0.001)      # yield the GIL: a hot spin starves the demod thread (and,
+            return chunk         # as a leaked daemon, every later test in the session)
 
     def popen(cmd, **kw):
         p = _FakeProc()
@@ -321,6 +329,7 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
 
     class _Endless:
         def read(self, n):
+            _time.sleep(0.001)   # yield the GIL: a hot spin starves the demod thread
             return chunk
 
     def popen(cmd, **kw):
@@ -331,8 +340,11 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
         return p
 
     ticks = itertools.count()
-    err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=1.0, popen=popen,
-                     clock=lambda: next(ticks) * 0.3, sleep=lambda s: None)
+    # max_s=30 gives ~100 clock ticks of budget so the reader thread's startup latency
+    # can never exhaust the deadline before the first chunk is demodulated; the 1 ms
+    # real sleep lets the reader run while the mailbox is empty.
+    err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=30.0, popen=popen,
+                     clock=lambda: next(ticks) * 0.3, sleep=lambda s: _time.sleep(0.001))
     assert err == "ffmpeg pipe closed"
 
 
