@@ -5,9 +5,9 @@ class _Pub:
     def __init__(self):
         self.calls = []
 
-    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None):
+    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None, stream=None):
         self.calls.append({"ts": ts, "active": active, "freq_mhz": freq_mhz,
-                           "until_ts": until_ts, "error": error})
+                           "until_ts": until_ts, "error": error, "stream": stream})
 
 
 def test_set_command_validates_and_pending_consumes_once():
@@ -64,3 +64,35 @@ def test_stale_stop_is_cleared_before_a_new_session():
     vc.set_command({"view": "stop"})               # stop arrives while idle
     vc.run_view(5000.0)
     assert seen["preset"] is False                 # run_view cleared it
+
+
+def test_stream_name_from_push_url():
+    from view_controller import stream_name_from_push_url
+    assert stream_name_from_push_url("rtsp://u:p@10.8.0.1:8554/hackrf-view") == "hackrf-view"
+    assert stream_name_from_push_url("rtsp://host:8554/a/b-view/") == "b-view"
+    assert stream_name_from_push_url("") is None
+    assert stream_name_from_push_url(None) is None
+
+
+def test_announce_publishes_retained_inactive_state_with_stream():
+    pub = _Pub()
+    vc = ViewController(pub, lambda *a: None, stream="hackrf-view", clock=lambda: 111.0)
+    vc.announce()
+    assert pub.calls == [{"ts": 111, "active": False, "freq_mhz": None,
+                          "until_ts": None, "error": None, "stream": "hackrf-view"}]
+
+
+def test_announce_mid_session_republishes_the_active_state():
+    pub = _Pub()
+
+    def stream(freq, stop, max_s):
+        vc.announce()                    # simulates an MQTT reconnect during a session
+        return None
+
+    vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None,
+                        clock=lambda: 1000.0, stream="hackrf-view")
+    vc.run_view(5865.0)
+    actives = [c for c in pub.calls if c["active"]]
+    assert len(actives) == 2             # session start + reconnect re-announce
+    assert actives[1]["freq_mhz"] == 5865.0 and actives[1]["until_ts"] == 1060
+    assert all(c["stream"] == "hackrf-view" for c in pub.calls)
