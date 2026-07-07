@@ -71,6 +71,27 @@ from dweller import iq_from_int8            # agent/scan flat module (shared sys
 CHUNK_S = 0.5
 
 
+class ChunkMailbox:
+    """Single-slot 'latest chunk' handoff from the USB reader to the demod loop.
+    Replacing an unconsumed chunk counts as a dropped chunk (air lost)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._buf = None
+        self.dropped = 0
+
+    def put(self, buf):
+        with self._lock:
+            if self._buf is not None:
+                self.dropped += 1
+            self._buf = buf
+
+    def take(self):
+        with self._lock:
+            buf, self._buf = self._buf, None
+            return buf
+
+
 def select_frames(frames, chunk_s, fps):
     """Even subsample so one chunk emits at most chunk_s*fps frames (pacing budget)."""
     want = max(1, int(round(chunk_s * fps)))

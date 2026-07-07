@@ -172,3 +172,18 @@ def test_run_stream_times_out():
     err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=1.0, popen=popen,
                      clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.05)))
     assert err is None                               # deadline reached = clean exit
+
+
+from stream_demod import ChunkMailbox
+
+
+def test_chunk_mailbox_counts_overwrites():
+    mb = ChunkMailbox()
+    assert mb.take() is None
+    mb.put(b"a")
+    assert mb.take() == b"a" and mb.take() is None
+    assert mb.dropped == 0
+    mb.put(b"b")
+    mb.put(b"c")                     # unconsumed "b" is replaced -> 1 dropped chunk
+    assert mb.dropped == 1
+    assert mb.take() == b"c"
