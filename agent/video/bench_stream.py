@@ -10,9 +10,11 @@ Gate: "x realtime" <= ~1.0 means the Pi keeps up with live streaming.
 import argparse
 import os
 import sys
+import threading
 import time
 
 for base in ("agent/video", "/opt/fpv-video-stream/agent/video",
+             "agent/scan", "/opt/fpv-video-stream/agent/scan",
              os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else "."):
     if os.path.isdir(base) and base not in sys.path:
         sys.path.insert(0, base)
@@ -29,14 +31,79 @@ def iq_from_int8(raw):
     return (data[0::2] + 1j * data[1::2]) / 128.0
 
 
+def bench_pipeline(fs, chunk_s, rounds, width, fps):
+    """Feed synthetic chunks at the REAL-TIME rate through the restructured
+    pipeline (mailbox -> demod -> queue -> paced writer) and report drops."""
+    from stream_demod import (ChunkMailbox, FrameQueue, FramePacer, writer_loop,
+                              chunk_to_frames, select_frames, VIEW_HEIGHT)
+    from dweller import iq_from_int8 as iq_from_int8_dweller
+    img = (np.indices((64, 64)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("PAL", img, fs, frames=max(1, int(round(chunk_s * 25))))
+    raw = to_int8(fm_modulate(bb, fs, 4e6), noise_std=0.05)
+    n_bytes = int(fs * 2 * chunk_s)
+    raw = bytes((raw * (n_bytes // len(raw) + 1))[:n_bytes])
+
+    mailbox = ChunkMailbox()
+    q = FrameQueue(maxlen=int(fps))
+    stop = threading.Event()
+    err = {"msg": None}
+    written = [0]
+
+    class _Enc:
+        def poll(self):
+            return None
+
+    pacer = FramePacer(fps, lambda fr: written.__setitem__(0, written[0] + 1))
+    writer = threading.Thread(target=writer_loop, args=(q, pacer, _Enc(), stop, err),
+                              kwargs={"dropped_chunks": lambda: mailbox.dropped},
+                              daemon=True)
+    writer.start()
+
+    done = threading.Event()
+
+    def feeder():
+        for _ in range(rounds):
+            time.sleep(chunk_s)                     # chunks arrive at the air rate
+            mailbox.put(raw)
+        done.set()
+
+    threading.Thread(target=feeder, daemon=True).start()
+
+    t0 = time.perf_counter()
+    height = VIEW_HEIGHT["PAL"]
+    while not (done.is_set() and mailbox.take() is None):
+        buf = mailbox.take()
+        if buf is None:
+            time.sleep(0.005)
+            continue
+        iq = iq_from_int8_dweller(buf)
+        for fr in select_frames(chunk_to_frames(iq, fs, "PAL", width, height, 5e6),
+                                chunk_s, fps):
+            q.put(fr.tobytes())
+    q.close()
+    writer.join(timeout=int(fps) / fps + 2.0)
+    stop.set()
+    dur = time.perf_counter() - t0
+    print(f"pipeline fs={fs / 1e6:.1f}MS/s rounds={rounds} width={width} fps={fps}")
+    print(f"dropped_chunks={mailbox.dropped} dropped_frames={q.dropped} "
+          f"avg_fps={written[0] / dur:.1f} (gate: dropped_chunks=0)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fs", type=float, default=8e6)
     ap.add_argument("--chunk-s", type=float, default=0.5)
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--width", type=int, default=480)
+    ap.add_argument("--pipeline", action="store_true",
+                    help="feed chunks at the real-time rate; gate: dropped_chunks=0")
+    ap.add_argument("--fps", type=float, default=15.0)
     args = ap.parse_args()
     fs, chunk_s = args.fs, args.chunk_s
+
+    if args.pipeline:
+        bench_pipeline(args.fs, args.chunk_s, args.rounds, args.width, args.fps)
+        return
 
     img = (np.indices((64, 64)).sum(axis=0) % 2).astype(float)      # checkerboard
     bb = make_cvbs("PAL", img, fs, frames=max(1, int(round(chunk_s * 25))))
