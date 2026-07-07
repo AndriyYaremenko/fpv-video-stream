@@ -90,7 +90,7 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
                                 chunk_s, fps):
             q.put(fr.tobytes())
     q.close()
-    writer.join(timeout=int(fps) / fps + 2.0)
+    writer.join(timeout=q.maxlen / fps + 2.0)
     stop.set()
     dur = time.perf_counter() - (first_write[0] if first_write[0] is not None else t0)
     print(f"pipeline fs={fs / 1e6:.1f}MS/s rounds={rounds} width={width} fps={fps}")

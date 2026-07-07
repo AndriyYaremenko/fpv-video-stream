@@ -38,8 +38,7 @@ view controller / retune loop / main are untouched.
 - **Errors:** a write failure (`BrokenPipeError`/`OSError`) or dead encoder detected in the
   writer sets a shared error slot and wakes the loop; the demod loop exits exactly like today's
   error path (`finally` kills both subprocesses; retune/stop semantics unchanged).
-- **Shutdown:** `stop_event` (stop / retune / timeout) wakes the writer via the condition;
-  the writer exits before the `finally` cleanup. No frame is written after stop.
+- **Shutdown:** on `stop_event` (stop / retune / timeout) the writer exits at its next poll (≤0.1 s; a queue close notifies it immediately); at most one already-dequeued frame may still flush (one-frame-in-flight). The demod loop's `finally` kills the capture first so teardown cannot inflate `dropped_chunks`.
 - **Observability:** every ~10 s the writer logs
   `view stream: <avg fps> fps, queue=<depth>, dropped_frames=<n>, dropped_chunks=<k>`
   (chunk drops counted in the demod loop when the mailbox overwrote an unconsumed chunk —

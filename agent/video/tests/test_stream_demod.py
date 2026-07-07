@@ -334,3 +334,21 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
     err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=1.0, popen=popen,
                      clock=lambda: next(ticks) * 0.3, sleep=lambda s: None)
     assert err == "ffmpeg pipe closed"
+
+
+def test_run_stream_kills_capture_before_draining_the_writer():
+    # Teardown order: capture dies first so the reader can't inflate dropped_chunks
+    # while the writer drains the tail into the still-alive encoder.
+    fs = 4e6
+    kills = []
+
+    def popen(cmd, **kw):
+        p = _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs))) if cmd[0] == "hackrf_transfer" else _FakeProc()
+        orig_kill = p.kill
+        p.kill = lambda name=cmd[0]: (kills.append(name), orig_kill())
+        return p
+
+    t = [0.0]
+    run_stream(_vcfg(), 947.0, threading.Event(), max_s=60.0, popen=popen,
+               clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert kills == ["hackrf_transfer", "ffmpeg"]

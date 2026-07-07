@@ -278,19 +278,25 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
         if error is None and err["msg"]:
             error = err["msg"]                           # writer failure surfaced after the loop
     finally:
+        try:
+            cap.kill()      # stop the reader FIRST: teardown must not inflate dropped_chunks
+            cap.wait(timeout=5)
+        except Exception:
+            pass
         if q is not None:
             q.close()
         if writer is not None and err["msg"] is None and not stop_event.is_set():
             # Clean end (timeout / capture death): let the writer drain the tail.
+            # NOTE: the reader/writer threads exit via EOF / closed-queue / EPIPE — NOT via
+            # stop_event (the view controller may clear the shared event right after we
+            # return); that guarantee holds only because cap/enc are killed before returning.
             writer.join(timeout=q.maxlen / vcfg.view_fps + 1.0)
         if error is None and not stop_event.is_set() and err["msg"]:
             error = err["msg"]                       # writer failed during/after the drain
-        for proc in (cap, enc):
-            if proc is None:
-                continue
+        if enc is not None:
             try:
-                proc.kill()
-                proc.wait(timeout=5)
+                enc.kill()
+                enc.wait(timeout=5)
             except Exception:
                 pass
     return error
