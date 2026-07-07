@@ -4,6 +4,7 @@ Pure pieces (unit-tested): command builders, standard pick with PAL fallback,
 row resize, chunk->frames. The subprocess pipeline (run_stream) is added on top
 and kept as thin as possible."""
 import logging
+from collections import deque
 
 import numpy as np
 
@@ -71,6 +72,71 @@ from dweller import iq_from_int8            # agent/scan flat module (shared sys
 CHUNK_S = 0.5
 
 
+class ChunkMailbox:
+    """Single-slot 'latest chunk' handoff from the USB reader to the demod loop.
+    Replacing an unconsumed chunk counts as a dropped chunk (air lost)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._buf = None
+        self.dropped = 0
+
+    def put(self, buf):
+        with self._lock:
+            if self._buf is not None:
+                self.dropped += 1
+            self._buf = buf
+
+    def take(self):
+        with self._lock:
+            buf, self._buf = self._buf, None
+            return buf
+
+
+class FrameQueue:
+    """Bounded frame FIFO between the demod loop and the writer thread.
+    put() never blocks: when full, the OLDEST frame is dropped (the live tail
+    matters more than stale frames). close() marks end-of-stream: get() drains
+    the remainder, then returns None."""
+
+    def __init__(self, maxlen):
+        self.maxlen = max(1, int(maxlen))
+        self.dropped = 0
+        self._d = deque()
+        self._cond = threading.Condition()
+        self._closed = False
+
+    def __len__(self):
+        with self._cond:
+            return len(self._d)
+
+    @property
+    def closed(self):
+        with self._cond:
+            return self._closed
+
+    def put(self, frame):
+        with self._cond:
+            if len(self._d) >= self.maxlen:
+                self._d.popleft()
+                self.dropped += 1
+            self._d.append(frame)
+            self._cond.notify()
+
+    def get(self, timeout=0.1):
+        with self._cond:
+            if not self._d and not self._closed:
+                self._cond.wait(timeout)
+            if self._d:
+                return self._d.popleft()
+            return None
+
+    def close(self):
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+
+
 def select_frames(frames, chunk_s, fps):
     """Even subsample so one chunk emits at most chunk_s*fps frames (pacing budget)."""
     want = max(1, int(round(chunk_s * fps)))
@@ -100,15 +166,52 @@ class FramePacer:
         self._next = max(self._next + self._period, self._clock() - self._period)
 
 
+def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, clock=None,
+                log_every_s=10.0):
+    """Writer-thread body: pace frames from the queue into ffmpeg stdin.
+
+    Runs until stop_event (immediate, no drain — a retune/stop must not flush
+    stale frames), the queue is closed and drained (clean end), a write fails,
+    or the encoder dies. Failures land in the shared err slot for the demod
+    loop to pick up. Logs the smoothness stats (the acceptance metric) every
+    ~log_every_s seconds."""
+    clock = clock or time.monotonic
+    written = 0
+    last_log = clock()
+    last_written = 0
+    while not stop_event.is_set():
+        fr = q.get(timeout=0.1)
+        if fr is None:
+            if q.closed:
+                return
+            if enc.poll() is not None:
+                err["msg"] = "ffmpeg exited"
+                return
+        else:
+            try:
+                pacer.tick(fr)
+                written += 1
+            except (BrokenPipeError, OSError):
+                err["msg"] = "ffmpeg pipe closed"
+                return
+        now = clock()
+        if now - last_log >= log_every_s:
+            fps = (written - last_written) / (now - last_log)
+            LOG.info("view stream: %.1f fps, queue=%d, dropped_frames=%d, dropped_chunks=%d",
+                     fps, len(q), q.dropped,
+                     dropped_chunks() if dropped_chunks is not None else 0)
+            last_log = now
+            last_written = written
+
+
 def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                popen=None, clock=None, sleep=None):
-    """Blocking capture->demod->encode loop for one view session.
+    """Blocking capture->demod->queue loop for one view session.
 
+    A writer thread paces queued frames into ffmpeg (writer_loop), so the demod
+    loop returns to the mailbox in demod-time only and keeps up with the air.
     Returns None on clean stop/timeout, or an error string when a subprocess
-    died. Always kills both subprocesses before returning. A dedicated reader
-    thread drains hackrf stdout into a single-slot mailbox (dropping backlog)
-    so the USB stream never stalls on a full pipe.
-    """
+    died. Always kills both subprocesses before returning."""
     popen = popen or subprocess.Popen
     clock = clock or time.monotonic
     sleep = sleep or time.sleep
@@ -117,12 +220,13 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
     cap = popen(build_capture_cmd(freq_mhz * 1e6, fs, lna, vga, amp),
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=chunk_bytes)
     enc = None
-    pacer = None
+    q = None
+    writer = None
+    err = {"msg": None}
     standard = None
     height = None
     error = None
-    mailbox = {}
-    lock = threading.Lock()
+    mailbox = ChunkMailbox()
 
     def _reader():
         while not stop_event.is_set():
@@ -132,15 +236,16 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                 return
             if not buf or len(buf) < chunk_bytes:
                 return                                   # EOF: capture died
-            with lock:
-                mailbox["chunk"] = buf                   # drop any unconsumed chunk
+            mailbox.put(buf)
 
     threading.Thread(target=_reader, daemon=True).start()
     t_end = clock() + max_s
     try:
         while not stop_event.is_set() and clock() < t_end:
-            with lock:
-                buf = mailbox.pop("chunk", None)
+            if err["msg"]:
+                error = err["msg"]
+                break
+            buf = mailbox.take()
             if buf is None:
                 if cap.poll() is not None:
                     error = "hackrf_transfer exited"
@@ -156,33 +261,42 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                 enc = popen(build_encode_cmd(vcfg.view_push_url, vcfg.view_width,
                                              height, vcfg.view_fps),
                             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                q = FrameQueue(maxlen=int(vcfg.view_fps * 1.0))
                 pacer = FramePacer(vcfg.view_fps, enc.stdin.write, clock=clock, sleep=sleep)
+                writer = threading.Thread(
+                    target=writer_loop, args=(q, pacer, enc, stop_event, err),
+                    kwargs={"dropped_chunks": lambda: mailbox.dropped, "clock": clock},
+                    daemon=True)
+                writer.start()
                 LOG.info("view stream: %s %dx%d @%.0ffps", standard, vcfg.view_width,
                          height, vcfg.view_fps)
-            frames = select_frames(
-                chunk_to_frames(iq, fs, standard, vcfg.view_width, height,
-                                vcfg.lpf_cutoff_hz, vcfg.blank_frac),
-                CHUNK_S, vcfg.view_fps)
-            for fr in frames:
-                if stop_event.is_set() or clock() >= t_end:
-                    break
-                try:
-                    pacer.tick(fr.tobytes())
-                except (BrokenPipeError, OSError):
-                    error = "ffmpeg pipe closed"
-                    break
-            if error:
-                break
-            if enc is not None and enc.poll() is not None:
-                error = "ffmpeg exited"
-                break
+            for fr in select_frames(
+                    chunk_to_frames(iq, fs, standard, vcfg.view_width, height,
+                                    vcfg.lpf_cutoff_hz, vcfg.blank_frac),
+                    CHUNK_S, vcfg.view_fps):
+                q.put(fr.tobytes())
+        if error is None and err["msg"]:
+            error = err["msg"]                           # writer failure surfaced after the loop
     finally:
-        for proc in (cap, enc):
-            if proc is None:
-                continue
+        try:
+            cap.kill()      # stop the reader FIRST: teardown must not inflate dropped_chunks
+            cap.wait(timeout=5)
+        except Exception:
+            pass
+        if q is not None:
+            q.close()
+        if writer is not None and err["msg"] is None and not stop_event.is_set():
+            # Clean end (timeout / capture death): let the writer drain the tail.
+            # NOTE: the reader/writer threads exit via EOF / closed-queue / EPIPE — NOT via
+            # stop_event (the view controller may clear the shared event right after we
+            # return); that guarantee holds only because cap/enc are killed before returning.
+            writer.join(timeout=q.maxlen / vcfg.view_fps + 1.0)
+        if error is None and not stop_event.is_set() and err["msg"]:
+            error = err["msg"]                       # writer failed during/after the drain
+        if enc is not None:
             try:
-                proc.kill()
-                proc.wait(timeout=5)
+                enc.kill()
+                enc.wait(timeout=5)
             except Exception:
                 pass
     return error

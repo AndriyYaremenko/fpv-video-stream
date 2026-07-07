@@ -113,7 +113,14 @@ def _vcfg():
     return c
 
 
+import functools
+import time as _t
+
+
+@functools.lru_cache(maxsize=4)
 def _chunk_bytes(fs, seconds=CHUNK_S):
+    # Cached: the CVBS synth + FM modulation cost seconds per call and several
+    # run_stream tests request the identical chunk. bytes are immutable — safe to share.
     img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
     bb = make_cvbs("PAL", img, fs, frames=max(1, int(round(seconds * 25))))
     raw = to_int8(fm_modulate(bb, fs, 2e6))
@@ -159,7 +166,8 @@ def test_run_stream_times_out():
 
     class _Endless:                                  # capture never EOFs: timeout must end it
         def read(self, n):
-            return chunk
+            _t.sleep(0.001)      # yield the GIL: a hot spin starves the demod thread (and,
+            return chunk         # as a leaked daemon, every later test in the session)
 
     def popen(cmd, **kw):
         p = _FakeProc()
@@ -172,3 +180,187 @@ def test_run_stream_times_out():
     err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=1.0, popen=popen,
                      clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.05)))
     assert err is None                               # deadline reached = clean exit
+
+
+from stream_demod import ChunkMailbox
+
+
+def test_chunk_mailbox_counts_overwrites():
+    mb = ChunkMailbox()
+    assert mb.take() is None
+    mb.put(b"a")
+    assert mb.take() == b"a" and mb.take() is None
+    assert mb.dropped == 0
+    mb.put(b"b")
+    mb.put(b"c")                     # unconsumed "b" is replaced -> 1 dropped chunk
+    assert mb.dropped == 1
+    assert mb.take() == b"c"
+
+
+from stream_demod import FrameQueue
+
+
+def test_frame_queue_fifo_and_drop_oldest():
+    q = FrameQueue(maxlen=2)
+    q.put(b"1"); q.put(b"2")
+    assert len(q) == 2 and q.dropped == 0
+    q.put(b"3")                       # full: "1" (oldest) is dropped
+    assert q.dropped == 1
+    assert q.get() == b"2" and q.get() == b"3"
+    assert q.get(timeout=0.01) is None            # empty, not closed -> timeout
+
+
+def test_frame_queue_close_drains_then_none():
+    q = FrameQueue(maxlen=4)
+    q.put(b"a"); q.put(b"b")
+    q.close()
+    assert q.closed
+    assert q.get() == b"a" and q.get() == b"b"    # close still drains the tail
+    assert q.get(timeout=0.01) is None            # drained -> end of stream
+
+
+from stream_demod import writer_loop
+
+
+class _Pacer:
+    def __init__(self, fail_after=None):
+        self.out = []
+        self._fail_after = fail_after
+
+    def tick(self, fr):
+        if self._fail_after is not None and len(self.out) >= self._fail_after:
+            raise BrokenPipeError()
+        self.out.append(fr)
+
+
+def test_writer_loop_drains_closed_queue_in_order():
+    q = FrameQueue(maxlen=8)
+    for b in (b"1", b"2", b"3"):
+        q.put(b)
+    q.close()
+    pacer = _Pacer()
+    err = {"msg": None}
+    writer_loop(q, pacer, _FakeProc(), threading.Event(), err, clock=lambda: 0.0)
+    assert pacer.out == [b"1", b"2", b"3"]
+    assert err["msg"] is None
+
+
+def test_writer_loop_exits_immediately_on_stop_without_draining():
+    q = FrameQueue(maxlen=8)
+    q.put(b"1")
+    stop = threading.Event()
+    stop.set()
+    pacer = _Pacer()
+    writer_loop(q, pacer, _FakeProc(), stop, {"msg": None}, clock=lambda: 0.0)
+    assert pacer.out == []                        # nothing written after stop
+
+
+def test_writer_loop_reports_pipe_and_encoder_death():
+    q = FrameQueue(maxlen=8)
+    q.put(b"1"); q.put(b"2")
+    err = {"msg": None}
+    writer_loop(q, _Pacer(fail_after=1), _FakeProc(), threading.Event(), err,
+                clock=lambda: 0.0)
+    assert err["msg"] == "ffmpeg pipe closed"
+
+    dead = _FakeProc()
+    dead.poll = lambda: 1                         # encoder died, queue open+empty
+    err2 = {"msg": None}
+    writer_loop(FrameQueue(maxlen=8), _Pacer(), dead, threading.Event(), err2,
+                clock=lambda: 0.0)
+    assert err2["msg"] == "ffmpeg exited"
+
+
+def test_writer_loop_logs_stats_line(caplog):
+    import logging
+    q = FrameQueue(maxlen=8)
+    for b in (b"1", b"2", b"3"):
+        q.put(b)
+    q.close()
+    t = [0.0]
+
+    def clock():
+        t[0] += 6.0                               # 2 reads cross the 10 s threshold
+        return t[0]
+
+    with caplog.at_level(logging.INFO):
+        writer_loop(q, _Pacer(), _FakeProc(), threading.Event(), {"msg": None},
+                    dropped_chunks=lambda: 7, clock=clock)
+    lines = [r.getMessage() for r in caplog.records if "dropped_chunks" in r.getMessage()]
+    assert lines and "dropped_chunks=7" in lines[0] and "queue=" in lines[0]
+
+
+def test_run_stream_writes_every_selected_frame_of_a_chunk():
+    # One full chunk then EOF: the writer must drain the ENTIRE select budget
+    # (chunk_s * fps frames) before run_stream returns — no air lost to pacing.
+    fs = 4e6
+    procs = []
+
+    def popen(cmd, **kw):
+        p = _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs))) if cmd[0] == "hackrf_transfer" else _FakeProc()
+        procs.append(p)
+        return p
+
+    t = [0.0]
+    err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=60.0, popen=popen,
+                     clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert err == "hackrf_transfer exited"
+    frame_size = 320 * 288
+    budget = int(round(CHUNK_S * 10.0))            # _vcfg() fps = 10 -> 5 frames
+    assert len(procs[1].stdin.getvalue()) == budget * frame_size
+
+
+def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
+    # Timeout exit with a healthy pipeline, then the writer fails while draining
+    # the tail: the error must still surface as run_stream's return value.
+    import itertools
+    import time as _time
+
+    import stream_demod as sd
+
+    def _failing_writer(q, pacer, enc, stop_event, err, **kw):
+        while not q.closed:
+            _time.sleep(0.001)
+        err["msg"] = "ffmpeg pipe closed"            # failure lands in the drain window
+
+    monkeypatch.setattr(sd, "writer_loop", _failing_writer)
+    fs = 4e6
+    chunk = _chunk_bytes(fs)
+
+    class _Endless:
+        def read(self, n):
+            _time.sleep(0.001)   # yield the GIL: a hot spin starves the demod thread
+            return chunk
+
+    def popen(cmd, **kw):
+        p = _FakeProc()
+        if cmd[0] == "hackrf_transfer":
+            p.stdout = _Endless()
+            p.poll = lambda: None
+        return p
+
+    ticks = itertools.count()
+    # max_s=30 gives ~100 clock ticks of budget so the reader thread's startup latency
+    # can never exhaust the deadline before the first chunk is demodulated; the 1 ms
+    # real sleep lets the reader run while the mailbox is empty.
+    err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=30.0, popen=popen,
+                     clock=lambda: next(ticks) * 0.3, sleep=lambda s: _time.sleep(0.001))
+    assert err == "ffmpeg pipe closed"
+
+
+def test_run_stream_kills_capture_before_draining_the_writer():
+    # Teardown order: capture dies first so the reader can't inflate dropped_chunks
+    # while the writer drains the tail into the still-alive encoder.
+    fs = 4e6
+    kills = []
+
+    def popen(cmd, **kw):
+        p = _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs))) if cmd[0] == "hackrf_transfer" else _FakeProc()
+        orig_kill = p.kill
+        p.kill = lambda name=cmd[0]: (kills.append(name), orig_kill())
+        return p
+
+    t = [0.0]
+    run_stream(_vcfg(), 947.0, threading.Event(), max_s=60.0, popen=popen,
+               clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert kills == ["hackrf_transfer", "ffmpeg"]
