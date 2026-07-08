@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from sync_tracker import SyncTracker
 from synth import make_cvbs, fm_modulate
@@ -46,3 +47,22 @@ def test_note_vsync_and_status():
     s = t.status()
     assert s["vsync_row"] == 37 and s["locked"] is True
     assert abs(s["line_hz"] - 15625.0) < 5.0
+
+
+@pytest.mark.parametrize("line_hz", [15625.0, 15705.0, 15859.0, 15437.0])   # 0, +0.5%, +1.5%, -1.2%
+def test_seed_locks_correct_or_stays_nominal_never_wrong(line_hz):
+    fs = 6e6
+    t = SyncTracker("PAL")
+    t.seed(_baseband(line_hz, fs), fs)
+    if t.locked:
+        assert abs(t.line_hz - line_hz) < 8.0        # locked => within a few Hz of the TRUE rate
+    else:
+        assert t.line_hz == LINE_HZ["PAL"]           # unlocked => safe nominal, never wrong
+
+
+def test_seed_far_off_rate_fails_safe_not_wrong_lock():
+    # +3% is outside the +/-2% window: must NOT lock onto an in-window artifact.
+    fs = 6e6
+    t = SyncTracker("PAL")
+    t.seed(_baseband(15625.0 * 1.03, fs), fs)
+    assert not (t.locked and abs(t.line_hz - 15625.0) > 20.0)   # no confident-but-wrong lock

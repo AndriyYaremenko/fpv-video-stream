@@ -1,16 +1,31 @@
 """Per-session sync lock state for the SDR live-view stream.
 
 Seeds the ACTUAL line frequency once from an rfft peak (a real FPV camera's
-crystal is off nominal by tens-hundreds of Hz; slicing at the nominal rate
-shears the picture) and carries the vertical-blanking row across chunks so the
-picture does not jump. View-path only; the scan snapshot path never builds one."""
+crystal is off nominal by tens-hundreds of Hz within +/-2% of nominal; slicing
+at the nominal rate shears the picture) and carries the vertical-blanking row
+across chunks so the picture does not jump. Larger deviations fail safe to
+nominal + unlocked (never a wrong lock). View-path only; the scan snapshot path
+never builds one."""
 import numpy as np
 
 from standard import LINE_HZ
 
-_CLAMP = 0.015          # accept a refined line rate within +/-1.5% of nominal
-_SEARCH = 0.010         # search the rfft peak within +/-1.0% of nominal (crystal bound)
-_MIN_PROMINENCE = 4.0   # peak must exceed the local magnitude floor by this ratio to lock
+_CLAMP = 0.020               # accept a refined line rate within +/-2% of nominal (crystal bound)
+_SEARCH = 0.020              # search the rfft peak within +/-2% of nominal
+_MIN_PROMINENCE = 4.0        # fundamental peak / local floor to be a candidate
+_MIN_HARM_PROMINENCE = 2.5   # 2nd-harmonic peak / local floor to CONFIRM a real line rate
+
+
+def _peak_prominence(spec, k_center, half_win, floor_half):
+    """(peak/local-floor ratio, peak bin) for a magnitude spectrum around k_center."""
+    lo, hi = max(1, k_center - half_win), min(len(spec) - 1, k_center + half_win)
+    if hi <= lo:
+        return 0.0, k_center
+    k = lo + int(np.argmax(spec[lo:hi + 1]))
+    peak = float(spec[k])
+    flo, fhi = max(1, k_center - floor_half), min(len(spec), k_center + floor_half)
+    floor = float(np.median(spec[flo:fhi])) + 1e-12
+    return peak / floor, k
 
 
 class SyncTracker:
@@ -22,38 +37,39 @@ class SyncTracker:
         self.vsync_row = None
 
     def seed(self, baseband, fs):
-        """One-time actual-line-rate estimate from a prominent rfft peak.
-        No prominent line (e.g. pure noise) -> stay nominal, locked=False."""
+        """One-time actual-line-rate estimate. Locks only when a prominent peak
+        near nominal ALSO has a prominent 2nd harmonic (a real line-rate
+        fundamental does; in-window CVBS artifacts do not). Any failure leaves
+        line_hz at nominal + locked=False (safe fall-back, never a wrong lock)."""
         bb = np.asarray(baseband, dtype=np.float64)
         n = len(bb)
         self.locked = False
+        self.line_hz = self._nominal          # a failed (re)seed never keeps a stale rate
         if n < 4096:
             return
         spec = np.abs(np.fft.rfft(bb * np.hanning(n)))
         bin_hz = fs / n
         k0 = int(round(self._nominal / bin_hz))
         half = max(2, int(round(self._nominal * _SEARCH / bin_hz)))
-        lo, hi = max(1, k0 - half), min(len(spec) - 1, k0 + half)
-        if hi <= lo:
+        prom, k = _peak_prominence(spec, k0, half, 5 * half)
+        if prom < _MIN_PROMINENCE:
             return
-        k = lo + int(np.argmax(spec[lo:hi + 1]))
-        peak = float(spec[k])
-        flo, fhi = max(1, k0 - 5 * half), min(len(spec), k0 + 5 * half)
-        floor = float(np.median(spec[flo:fhi])) + 1e-12
-        if peak / floor < _MIN_PROMINENCE:
-            return                              # no genuine line sync -> nominal, unlocked
         if 0 < k < len(spec) - 1:
             a, b, c = spec[k - 1], spec[k], spec[k + 1]
             denom = a - 2 * b + c
-            delta = 0.5 * (a - c) / denom if abs(denom) > 1e-12 else 0.0
-            delta = float(np.clip(delta, -0.5, 0.5))
+            delta = float(np.clip(0.5 * (a - c) / denom, -0.5, 0.5)) if abs(denom) > 1e-12 else 0.0
         else:
             delta = 0.0
         f = (k + delta) * bin_hz
-        if abs(f - self._nominal) <= self._nominal * _CLAMP:
-            self.line_hz = float(f)
-            self.locked = True
-        # else: leave nominal + unlocked
+        if abs(f - self._nominal) > self._nominal * _CLAMP:
+            return
+        # confirm a real line rate: the 2nd harmonic must also stand out
+        k2 = int(round(2.0 * f / bin_hz))
+        harm, _ = _peak_prominence(spec, k2, max(2, half // 2), 5 * half)
+        if harm < _MIN_HARM_PROMINENCE:
+            return                            # in-window artifact, not the line fundamental
+        self.line_hz = float(f)
+        self.locked = True
 
     def note_vsync(self, row):
         self.vsync_row = int(row)
