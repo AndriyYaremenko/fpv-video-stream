@@ -211,17 +211,18 @@ def test_deshear_zero_is_identity():
 
 
 def test_align_vsync_locks_vbi_not_dark_scene():
-    # A field: a genuine VBI (>=win near-sync rows) at rows 5..10, plus a dark
-    # SCENE band (low mean, HIGH variance) at rows 25..30. Mean-only picks the
-    # wrong one if the scene averages darker; low-mean+low-variance must pick the VBI.
+    # VBI (rows 5..10): low mean, LOW variance. Dark scene (rows 25..30): EVEN
+    # LOWER mean but HIGH variance. Mean-only would wrongly pick the scene; the
+    # robust low-mean+low-variance detector (tracker path) must pick the VBI.
     from frame import _align_vsync
+    from sync_tracker import SyncTracker
     rng = np.random.default_rng(7)
     field = rng.uniform(0.3, 1.0, size=(50, 80)).astype(np.float32)
-    field[5:11, :] = 0.02 + rng.uniform(0, 0.01, size=(6, 80))     # VBI: low mean, low var (6 rows = win)
-    field[25:31, :] = rng.uniform(0.0, 0.2, size=(6, 80))          # dark scene: low mean, HIGH var
-    out = _align_vsync(field)
-    # the VBI rows (originally 5..10) must now sit at the top
-    assert out[0:4].mean() < 0.1 and out[0:4].std() < 0.05
+    field[5:11, :] = 0.12 + rng.uniform(0, 0.01, size=(6, 80))     # VBI: low mean, LOW var
+    field[25:31, :] = rng.uniform(0.0, 0.2, size=(6, 80))          # scene: lower mean, HIGH var
+    t = SyncTracker("PAL")
+    out = _align_vsync(field, tracker=t)
+    assert out[0:4].mean() < 0.16 and out[0:4].std() < 0.02        # VBI (low-var) landed on top
 
 
 def test_reconstruct_with_tracker_reduces_shear_vs_nominal():
@@ -243,11 +244,39 @@ def test_reconstruct_with_tracker_reduces_shear_vs_nominal():
     assert shear_metric(locked) < shear_metric(plain)
 
 
-def test_reconstruct_tracker_none_bit_identical():
-    fs = 4e6
-    img = np.tile(np.linspace(0, 1, 32), (32, 1))
-    bb = make_cvbs("PAL", img, fs, frames=3)
-    base = lowpass(fm_demod(fm_modulate(bb, fs, 2e6)), fs, 5e6)
-    a = reconstruct_frames(base, fs, "PAL", width=320)
-    b = reconstruct_frames(base, fs, "PAL", width=320, tracker=None)
-    assert len(a) == len(b) and all(np.array_equal(x, y) for x, y in zip(a, b))
+def test_align_vsync_tracker_none_matches_old_mean_only_oracle():
+    # tracker=None MUST reproduce the pre-branch darkest-window (mean-only) heuristic.
+    from frame import _align_vsync
+    def _old_align(rows, win=6):
+        n = rows.shape[0]
+        if n < win * 3:
+            return rows
+        m = rows.mean(axis=1)
+        ext = np.concatenate([m, m[:win - 1]])
+        sums = np.convolve(ext, np.ones(win, dtype=ext.dtype), "valid")[:n]
+        k = int(np.argmin(sums))
+        depth = float(np.median(m) - sums[k] / win)
+        spread = float(m.max() - m.min())
+        if spread <= 1e-9 or depth < 0.25 * spread:
+            return rows
+        return np.roll(rows, -k, axis=0)
+    rng = np.random.default_rng(3)
+    for _ in range(5):
+        rows = rng.uniform(0, 1, size=(48, 60)).astype(np.float32)
+        rows[7:13] = 0.02
+        assert np.array_equal(_align_vsync(rows, tracker=None), _old_align(rows))
+
+
+def test_align_vsync_bias_prefers_tracked_row_over_equal_decoy():
+    from frame import _align_vsync
+    from sync_tracker import SyncTracker
+    rng = np.random.default_rng(1)
+    field = rng.uniform(0.3, 1.0, size=(60, 80)).astype(np.float32)
+    field[10:16, :] = 0.05 + rng.uniform(0, 0.005, size=(6, 80))   # true VBI near tracked row
+    field[40:46, :] = 0.04 + rng.uniform(0, 0.005, size=(6, 80))   # slightly-better decoy far away
+    t = SyncTracker("PAL")
+    t.note_vsync(10)                                               # previous chunk locked row 10
+    out = _align_vsync(field, tracker=t)
+    # biased toward row 10 (VBI), NOT the marginally-better decoy at 40
+    assert out[0:4].mean() < 0.1
+    assert abs(t.vsync_row - 10) <= 6                              # stayed near the tracked row

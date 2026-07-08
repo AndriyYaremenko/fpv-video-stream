@@ -75,47 +75,50 @@ def build_frame(rows, width=720, blank_frac=0.18):
 def _align_vsync(rows, tracker=None, win=6):
     """Roll rows so the vertical-blanking interval sits at the top.
 
-    Scores each length-`win` row window by low mean AND low variance: the broad
-    vsync pulses sit near sync level with little variation, unlike a merely dark
-    SCENE region (low mean, normal variance). With a tracker carrying a prior
-    vsync_row, biases the search to a small band around it and re-acquires when
-    the best local candidate is weak. No-op when no window clearly beats the
-    field. tracker=None keeps the original darkest-window heuristic."""
+    tracker=None: the ORIGINAL darkest-window heuristic (argmin of the windowed
+    row-mean), byte-for-byte — the scan snapshot path relies on this being
+    unchanged. With a tracker: a robust low-mean-AND-low-variance detector (the
+    broad vsync pulses sit near sync level with little variation, unlike a merely
+    dark SCENE region) plus a cross-chunk bias toward the previously locked row,
+    re-acquiring globally only when the biased candidate is clearly worse."""
     n = rows.shape[0]
     if n < win * 3:
         return rows
     m = rows.mean(axis=1)
-    v = rows.var(axis=1)
     ext_m = np.concatenate([m, m[:win - 1]])
-    ext_v = np.concatenate([v, v[:win - 1]])
-    ones = np.ones(win, dtype=ext_m.dtype)
-    win_mean = np.convolve(ext_m, ones, "valid")[:n] / win
-    win_var = np.convolve(ext_v, ones, "valid")[:n] / win
+    win_mean = np.convolve(ext_m, np.ones(win, dtype=ext_m.dtype), "valid")[:n] / win
     spread = float(m.max() - m.min())
     if spread <= 1e-9:
         return rows
-    # score: prefer low mean AND low variance (both normalized to the field)
-    score = win_mean / spread + win_var / (float(v.max()) + 1e-12)
-    if tracker is not None and tracker.vsync_row is not None:
+
+    if tracker is None:                       # scan path: exact old mean-only heuristic
+        k = int(np.argmin(win_mean))
+        depth = float(np.median(m) - win_mean[k])
+        if depth < 0.25 * spread:
+            return rows
+        return np.roll(rows, -k, axis=0)
+
+    # view path: low-mean AND low-variance cost, normalized to be non-negative
+    v = rows.var(axis=1)
+    ext_v = np.concatenate([v, v[:win - 1]])
+    win_var = np.convolve(ext_v, np.ones(win, dtype=ext_v.dtype), "valid")[:n] / win
+    mmin, mmax = float(win_mean.min()), float(win_mean.max())
+    cost = (win_mean - mmin) / (mmax - mmin + 1e-12) + win_var / (float(win_var.max()) + 1e-12)
+    best = int(np.argmin(cost))
+    if tracker.vsync_row is not None:
         band = max(win, n // 8)
         centre = tracker.vsync_row % n
-        mask = np.ones(n) * 1e9
-        lo, hi = centre - band, centre + band + 1
-        for r in range(lo, hi):
-            mask[r % n] = 0.0
-        biased = score + mask
-        k = int(np.argmin(biased))
-        if score[k] > score.min() * 4:          # local band is weak -> re-acquire globally
-            k = int(np.argmin(score))
-    else:
-        k = int(np.argmin(score))
+        offs = (np.arange(n) - centre + n // 2) % n - n // 2   # signed circular distance
+        near = np.abs(offs) <= band
+        if near.any():
+            cand = int(np.argmin(np.where(near, cost, np.inf)))
+            if cost[cand] <= cost[best] + 0.15:               # additive slack: prefer the tracked row
+                best = cand
+    k = best
     depth = float(np.median(m) - win_mean[k])
     if depth < 0.25 * spread:
-        if tracker is not None:
-            tracker.note_vsync(k)
-        return rows
-    if tracker is not None:
-        tracker.note_vsync(k)
+        return rows                          # no distinct VBI this field: don't note a bogus row
+    tracker.note_vsync(k)
     return np.roll(rows, -k, axis=0)
 
 
