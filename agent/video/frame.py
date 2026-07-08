@@ -72,50 +72,88 @@ def build_frame(rows, width=720, blank_frac=0.18):
     return active[:, lo] * (dt(1.0) - frac) + active[:, hi] * frac
 
 
-def _align_vsync(rows, win=6):
-    """Roll rows so the vertical-blanking interval (the darkest consecutive row
-    window — broad vsync pulses) sits at the top: without this the field
-    boundary lands wherever the capture chunk started and the picture wraps.
-    No-op when no clearly darker window exists (signals without a visible VBI)."""
+def _align_vsync(rows, tracker=None, win=6):
+    """Roll rows so the vertical-blanking interval sits at the top.
+
+    Scores each length-`win` row window by low mean AND low variance: the broad
+    vsync pulses sit near sync level with little variation, unlike a merely dark
+    SCENE region (low mean, normal variance). With a tracker carrying a prior
+    vsync_row, biases the search to a small band around it and re-acquires when
+    the best local candidate is weak. No-op when no window clearly beats the
+    field. tracker=None keeps the original darkest-window heuristic."""
     n = rows.shape[0]
     if n < win * 3:
         return rows
     m = rows.mean(axis=1)
-    ext = np.concatenate([m, m[:win - 1]])                    # circular windows
-    sums = np.convolve(ext, np.ones(win, dtype=ext.dtype), mode="valid")[:n]
-    k = int(np.argmin(sums))
-    depth = float(np.median(m) - sums[k] / win)
+    v = rows.var(axis=1)
+    ext_m = np.concatenate([m, m[:win - 1]])
+    ext_v = np.concatenate([v, v[:win - 1]])
+    ones = np.ones(win, dtype=ext_m.dtype)
+    win_mean = np.convolve(ext_m, ones, "valid")[:n] / win
+    win_var = np.convolve(ext_v, ones, "valid")[:n] / win
     spread = float(m.max() - m.min())
-    if spread <= 1e-9 or depth < 0.25 * spread:
-        return rows                                           # no distinct VBI
+    if spread <= 1e-9:
+        return rows
+    # score: prefer low mean AND low variance (both normalized to the field)
+    score = win_mean / spread + win_var / (float(v.max()) + 1e-12)
+    if tracker is not None and tracker.vsync_row is not None:
+        band = max(win, n // 8)
+        centre = tracker.vsync_row % n
+        mask = np.ones(n) * 1e9
+        lo, hi = centre - band, centre + band + 1
+        for r in range(lo, hi):
+            mask[r % n] = 0.0
+        biased = score + mask
+        k = int(np.argmin(biased))
+        if score[k] > score.min() * 4:          # local band is weak -> re-acquire globally
+            k = int(np.argmin(score))
+    else:
+        k = int(np.argmin(score))
+    depth = float(np.median(m) - win_mean[k])
+    if depth < 0.25 * spread:
+        if tracker is not None:
+            tracker.note_vsync(k)
+        return rows
+    if tracker is not None:
+        tracker.note_vsync(k)
     return np.roll(rows, -k, axis=0)
 
 
-def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18, budget=None):
+def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18, budget=None,
+                       tracker=None):
     """Slice into lines, chunk into FIELDS (LINES/2), align each to its vertical
     sync, build each frame.
 
-    Real CVBS is interlaced: every field is a complete vertical scan of the
-    picture, so stacking a full 2-field frame shows the image TWICE. One field
-    per output frame gives a single copy at half vertical resolution.
-
-    budget: build at most this many frames, picked EVENLY across the chunk's
-    fields (the streamer's fps budget) — skipped fields are never aligned or
-    resampled, which is the point: they would be discarded downstream anyway."""
-    rows = slice_lines(baseband, fs, standard)
+    With a tracker: slice at the measured line rate, deshear the fractional
+    residual per field, and lock vsync with cross-chunk bias. tracker=None =
+    nominal slicing, no deshear, independent per-field vsync (scan path)."""
+    line_hz = tracker.line_hz if tracker is not None else None
+    rows = slice_lines(baseband, fs, standard, line_hz=line_hz)
+    if tracker is not None:
+        spl_i = int(round(fs / tracker.line_hz))
+        drift = fs / tracker.line_hz - spl_i
+    else:
+        drift = 0.0
     field = LINES[standard] // 2
     n_frames = rows.shape[0] // field
     idx = range(n_frames)
     if budget is not None:
         budget = int(budget)
         if budget <= 0:
-            return []                      # the caller explicitly asked for nothing
+            return []
         if budget < n_frames:
             idx = np.round(np.linspace(0, n_frames - 1, budget)).astype(int)
-    frames = [build_frame(_align_vsync(rows[f * field:(f + 1) * field]), width, blank_frac)
-              for f in idx]
-    if not frames:                       # fewer than one full field of lines
-        frames.append(build_frame(_align_vsync(rows), width, blank_frac))
+    frames = []
+    for f in idx:
+        fr = _align_vsync(rows[f * field:(f + 1) * field], tracker=tracker)
+        if drift != 0.0:
+            fr = deshear(fr, drift)
+        frames.append(build_frame(fr, width, blank_frac))
+    if not frames:
+        fr = _align_vsync(rows, tracker=tracker)
+        if drift != 0.0:
+            fr = deshear(fr, drift)
+        frames.append(build_frame(fr, width, blank_frac))
     return frames
 
 

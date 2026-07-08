@@ -1,7 +1,10 @@
 import numpy as np
 
-from frame import slice_lines, build_frame, reconstruct_frames, pick_sharpest, laplacian_var, deshear
-from synth import make_cvbs
+from frame import (slice_lines, build_frame, reconstruct_frames, pick_sharpest, laplacian_var,
+                    deshear, _align_vsync)
+from synth import make_cvbs, fm_modulate
+from demod import fm_demod, lowpass
+from sync_tracker import SyncTracker
 from standard import LINES, LINE_HZ
 
 
@@ -205,3 +208,46 @@ def test_deshear_straightens_a_known_shear():
 def test_deshear_zero_is_identity():
     rows = np.random.default_rng(1).normal(size=(20, 64)).astype(np.float32)
     assert np.array_equal(deshear(rows, 0.0), rows)
+
+
+def test_align_vsync_locks_vbi_not_dark_scene():
+    # A field: a genuine VBI (>=win near-sync rows) at rows 5..10, plus a dark
+    # SCENE band (low mean, HIGH variance) at rows 25..30. Mean-only picks the
+    # wrong one if the scene averages darker; low-mean+low-variance must pick the VBI.
+    from frame import _align_vsync
+    rng = np.random.default_rng(7)
+    field = rng.uniform(0.3, 1.0, size=(50, 80)).astype(np.float32)
+    field[5:11, :] = 0.02 + rng.uniform(0, 0.01, size=(6, 80))     # VBI: low mean, low var (6 rows = win)
+    field[25:31, :] = rng.uniform(0.0, 0.2, size=(6, 80))          # dark scene: low mean, HIGH var
+    out = _align_vsync(field)
+    # the VBI rows (originally 5..10) must now sit at the top
+    assert out[0:4].mean() < 0.1 and out[0:4].std() < 0.05
+
+
+def test_reconstruct_with_tracker_reduces_shear_vs_nominal():
+    fs = 6e6
+    bars = np.zeros((64, 64), dtype=np.float64)
+    bars[:, ::8] = 1.0                                           # vertical bars
+    bb = make_cvbs("PAL", bars, fs, frames=4, interlaced=True, vbi_lines=6, line_hz=15705.0)
+    base = lowpass(fm_demod(fm_modulate(bb, fs, 4e6)), fs, 5e6)
+    t = SyncTracker("PAL")
+    t.seed(base, fs)
+    plain = reconstruct_frames(base, fs, "PAL", width=240)[0]
+    locked = reconstruct_frames(base, fs, "PAL", width=240, tracker=t)[0]
+    # shear metric: how much each row's brightness profile shifts vs the field's
+    # mean profile (lower = straighter). The locked frame must be straighter.
+    def shear_metric(fr):
+        prof = fr.mean(axis=0)
+        return float(np.mean([np.abs(np.correlate(r - r.mean(), prof - prof.mean(), "full").argmax()
+                                     - (len(prof) - 1)) for r in fr]))
+    assert shear_metric(locked) < shear_metric(plain)
+
+
+def test_reconstruct_tracker_none_bit_identical():
+    fs = 4e6
+    img = np.tile(np.linspace(0, 1, 32), (32, 1))
+    bb = make_cvbs("PAL", img, fs, frames=3)
+    base = lowpass(fm_demod(fm_modulate(bb, fs, 2e6)), fs, 5e6)
+    a = reconstruct_frames(base, fs, "PAL", width=320)
+    b = reconstruct_frames(base, fs, "PAL", width=320, tracker=None)
+    assert len(a) == len(b) and all(np.array_equal(x, y) for x, y in zip(a, b))
