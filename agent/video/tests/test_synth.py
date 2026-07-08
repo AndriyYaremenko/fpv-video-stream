@@ -45,9 +45,9 @@ def test_make_cvbs_line_hz_override_changes_sync_period():
     img = np.tile(np.linspace(0, 1, 32), (32, 1))
     nominal = make_cvbs("PAL", img, fs, frames=1)                     # 15625 Hz
     off = make_cvbs("PAL", img, fs, frames=1, line_hz=15705.0)        # faster lines
-    # sync pulses (samples at the sync level) recur every fs/line_hz samples;
-    # a higher line rate packs more sync pulses into the same signal length.
-    # With higher line_hz, samples-per-line decreases, so the signal is shorter.
+    # The sync-pulse COUNT is line_hz-invariant (make_cvbs always sweeps LINES*frames
+    # lines); the override shows up as a shorter signal — higher line_hz -> fewer
+    # samples-per-line (spl = fs/line_hz) -> fewer total samples.
     def n_sync_edges(sig):
         at_sync = sig < 0.15
         return int(np.sum(at_sync[1:] & ~at_sync[:-1]))
