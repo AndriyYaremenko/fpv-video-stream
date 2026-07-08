@@ -207,16 +207,25 @@ def test_run_stream_times_out():
 from stream_demod import ChunkMailbox
 
 
-def test_chunk_mailbox_counts_overwrites():
+def test_chunk_mailbox_fifo_depth2_drops_oldest():
     mb = ChunkMailbox()
     assert mb.take() is None
     mb.put(b"a")
     assert mb.take() == b"a" and mb.take() is None
     assert mb.dropped == 0
     mb.put(b"b")
-    mb.put(b"c")                     # unconsumed "b" is replaced -> 1 dropped chunk
+    mb.put(b"c")                     # depth 2: both retained, in order
+    assert mb.dropped == 0
+    mb.put(b"d")                     # overflow: oldest ("b") dropped
     assert mb.dropped == 1
-    assert mb.take() == b"c"
+    assert mb.take() == b"c" and mb.take() == b"d" and mb.take() is None
+
+
+def test_chunk_mailbox_custom_depth():
+    mb = ChunkMailbox(depth=1)       # old single-slot semantics
+    mb.put(b"x")
+    mb.put(b"y")
+    assert mb.dropped == 1 and mb.take() == b"y"
 
 
 from stream_demod import FrameQueue

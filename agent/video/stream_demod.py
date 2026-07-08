@@ -82,24 +82,29 @@ def iq_from_int8_fast(raw):
 
 
 class ChunkMailbox:
-    """Single-slot 'latest chunk' handoff from the USB reader to the demod loop.
-    Replacing an unconsumed chunk counts as a dropped chunk (air lost)."""
+    """Bounded FIFO handoff from the USB reader to the demod loop.
 
-    def __init__(self):
+    depth=2 absorbs an isolated CPU spike: the demod falls one chunk behind and
+    catches back up because its average cost is below realtime. Overflow drops
+    the OLDEST chunk (air lost, counted — the stats-log metric). take() pops in
+    air order, preserving continuity."""
+
+    def __init__(self, depth=2):
         self._lock = threading.Lock()
-        self._buf = None
+        self._d = deque()
+        self._depth = max(1, int(depth))
         self.dropped = 0
 
     def put(self, buf):
         with self._lock:
-            if self._buf is not None:
+            if len(self._d) >= self._depth:
+                self._d.popleft()
                 self.dropped += 1
-            self._buf = buf
+            self._d.append(buf)
 
     def take(self):
         with self._lock:
-            buf, self._buf = self._buf, None
-            return buf
+            return self._d.popleft() if self._d else None
 
 
 class FrameQueue:
