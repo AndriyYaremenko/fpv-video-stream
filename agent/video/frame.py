@@ -148,14 +148,16 @@ def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18, budge
             idx = np.round(np.linspace(0, n_frames - 1, budget)).astype(int)
     frames = []
     for f in idx:
-        fr = _align_vsync(rows[f * field:(f + 1) * field], tracker=tracker)
+        fr = rows[f * field:(f + 1) * field]
         if drift != 0.0:
-            fr = deshear(fr, drift)
+            fr = deshear(fr, drift)            # straighten BEFORE the vsync roll — else the
+        fr = _align_vsync(fr, tracker=tracker) # roll's wrap seam tears the shear ramp
         frames.append(build_frame(fr, width, blank_frac))
     if not frames:
-        fr = _align_vsync(rows, tracker=tracker)
+        fr = rows
         if drift != 0.0:
             fr = deshear(fr, drift)
+        fr = _align_vsync(fr, tracker=tracker)
         frames.append(build_frame(fr, width, blank_frac))
     return frames
 

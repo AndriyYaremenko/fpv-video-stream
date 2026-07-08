@@ -31,14 +31,18 @@ The operator sees two picture defects vs the reference tool «Бачу FPV» (wh
 ### `agent/video/sync_tracker.py` (new)
 `SyncTracker` holds one view session's sync state; created per session in `run_stream`, reset on
 retune (a fresh session = fresh tracker).
-- State: `line_hz` (EMA-smoothed actual line rate; init = nominal for the detected standard),
-  `vsync_row` (last locked field-boundary row, for cross-chunk bias; init None), `locked` (bool).
-- `refine_line_hz(spec, freqs, fs, standard) -> float`: parabolic-interpolate the rfft magnitude
-  peak in a narrow window around `LINE_HZ[standard]` (the `spec`/`freqs` are already computed by
-  `detect_standard` — passed in, not recomputed) → sub-bin line frequency; EMA into `line_hz`
-  (alpha ~0.3). Clamp the refined value to ±0.5% of nominal (reject spurious peaks on noise —
-  a real crystal is never off by more than that; out-of-range → keep the previous estimate and
-  mark `locked=False`).
+- State: `line_hz` (actual line rate, seeded once per session; init = nominal for the detected
+  standard), `vsync_row` (last locked field-boundary row, for cross-chunk bias; init None),
+  `locked` (bool).
+- `seed(baseband, fs)`: one-time actual-line-rate estimate from an rfft magnitude peak
+  (parabolic-interpolated for sub-bin precision), called once per view session — a real FPV
+  camera's crystal is stable within a session, and a per-chunk rfft would blow the Pi realtime
+  budget. Clamp the refined value to ±2% of nominal (every real FPV crystal, with margin) and
+  search the peak within ±1% of nominal; a candidate must ALSO have a prominent 2nd harmonic at
+  exactly 2x its frequency to confirm it's a real line rate (rejects in-window CVBS artifacts
+  that aren't the line fundamental). Out-of-range or unconfirmed → keep nominal, `locked=False`.
+  Lock is guaranteed within ±2% of nominal; just outside that band the tracker fails safe to
+  nominal; beyond that it's best-effort (out of contract — no real crystal drifts that far).
 - `predict_vsync(n_field_rows) -> int|None`: given the carried `vsync_row` and field period,
   the expected boundary row for this chunk (None until first lock).
 - Accessors for the stats readout: `line_hz`, `h_drift_samples_per_row`, `vsync_row`, `locked`.
@@ -75,9 +79,10 @@ retune (a fresh session = fresh tracker).
 
 ## Testing
 - pytest (synthetic CVBS via `agent/video/synth.py`, no hardware):
-  - `refine_line_hz`: on a clean synthetic signal generated at a KNOWN off-nominal line rate
-    (e.g. 15705 Hz), the refined estimate converges within a few Hz; on pure noise the ±0.5% clamp
-    rejects and `locked` stays False.
+  - `seed`: on a clean synthetic signal generated at a KNOWN off-nominal line rate (e.g. 15705 Hz),
+    the refined estimate converges within a few Hz; on pure noise (or a lone tone with no 2nd
+    harmonic) the ±2% clamp / harmonic gate rejects and `locked` stays False; just outside ±2%,
+    the tracker still fails safe to nominal rather than false-locking.
   - `deshear`: a synthetically sheared field (known linear drift) is straightened — columns of a
     vertical-bar test pattern become vertical (per-column variance across rows drops sharply).
   - vsync robustness: a field with a dark SCENE band plus a true VBI → the low-mean+low-variance
@@ -92,7 +97,10 @@ retune (a fresh session = fresh tracker).
   proof the lock is tracking the real crystal); retune re-locks.
 
 ## Risks / notes
-- The ±0.5% clamp assumes crystal error < 0.5% (5000 ppm) — generous; real cams are < 1000 ppm.
+- The ±2% clamp (with a ±1% search window and a 2nd-harmonic confirmation gate) assumes crystal
+  error < 2% (20000 ppm) — generous margin over every real FPV camera crystal; real cams are
+  usually < 1000 ppm. Lock is guaranteed within that band, fails safe to nominal just outside it,
+  and is best-effort (out of contract) beyond that — no real crystal drifts that far.
 - Deshear is integer-sample per row — sub-sample shear remains but is invisible after the downscale
   to 360 px; that's the "smoothness > sharpness" trade.
 - Cross-chunk vsync carry only helps within a run of contiguous chunks; a dropped chunk (rare in

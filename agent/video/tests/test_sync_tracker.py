@@ -33,7 +33,8 @@ def test_seed_holds_nominal_and_unlocked_on_noise():
 
 def test_seed_clamps_absurd_peak_to_nominal():
     fs = 6e6
-    # a strong tone far from the line rate must be rejected by the +/-0.5% clamp
+    # a strong tone far from the line rate must be rejected by the +/-2% clamp (and, even if it
+    # were in-band, by the 2nd-harmonic confirmation gate — a lone tone has no companion at 2x)
     t = SyncTracker("PAL")
     tone = np.sin(2 * np.pi * 30_000.0 * np.arange(200_000) / fs)
     t.seed(tone, fs)

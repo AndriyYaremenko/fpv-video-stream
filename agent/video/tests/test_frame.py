@@ -267,6 +267,33 @@ def test_align_vsync_tracker_none_matches_old_mean_only_oracle():
         assert np.array_equal(_align_vsync(rows, tracker=None), _old_align(rows))
 
 
+def test_deshear_before_align_has_no_seam_unlike_after():
+    # Reconstruct applies deshear THEN _align_vsync. Prove that order matters:
+    # a straight field (bar at a constant column) + a mid-field VBI (forces a
+    # nonzero roll), pre-sheared as off-nominal slicing would leave it. Deshear
+    # BEFORE the roll recovers a straight bar; deshear AFTER the roll tears it at
+    # the roll's wrap seam.
+    from frame import deshear, _align_vsync
+    n, w, drift = 48, 80, 0.6
+    true = np.full((n, w), 0.6, dtype=np.float32)
+    true[:, 40] = 1.0                              # straight vertical bar, all rows
+    true[10:16, :] = 0.0                           # VBI band mid-field (sync level)
+    sheared = np.stack([np.roll(true[r], int(round(r * drift))) for r in range(n)])
+
+    good = _align_vsync(deshear(sheared, drift))   # SHIPPED order: straighten, then roll
+    bad = deshear(_align_vsync(sheared), drift)     # buggy order: roll, then straighten
+
+    def max_bar_jump(field):
+        # ignore the 6 VBI rows (all-zero → argmax is 0, not a bar); measure the
+        # largest adjacent-row bar-column jump among the picture rows.
+        cols = field.argmax(axis=1)
+        picture = [c for r, c in enumerate(cols) if field[r].max() > 0.5]
+        return int(np.abs(np.diff(picture)).max()) if len(picture) > 1 else 0
+
+    assert max_bar_jump(good) <= 1                  # straight: bar column constant across picture rows
+    assert max_bar_jump(bad) >= 10                  # buggy order tears at the wrap seam
+
+
 def test_align_vsync_bias_prefers_tracked_row_over_equal_decoy():
     from frame import _align_vsync
     from sync_tracker import SyncTracker

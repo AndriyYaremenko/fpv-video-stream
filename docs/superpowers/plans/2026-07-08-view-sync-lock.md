@@ -4,7 +4,7 @@
 
 **Goal:** Lock the SDR view picture horizontally (no shear) and vertically (no roll/jump) by measuring the ACTUAL line rate and using a robust cross-chunk vertical-blanking lock, surfacing the lock state in the stats log — without disturbing the scan path or the 2b reshape fast path.
 
-**Architecture:** A stateful `SyncTracker` (one per view session) seeds the actual line frequency once from an rfft peak (parabolic-interpolated, clamped to ±0.5% of nominal), and carries the vertical-blanking row across chunks. `slice_lines` gains a `line_hz` override that always reshapes at the rounded integer samples-per-line; a new `deshear` corrects the fractional-samples-per-line residual with a cheap per-row gather; `_align_vsync` gains a low-mean-AND-low-variance detector with a predicted-phase bias. All of it engages only when a tracker is passed — `tracker=None`/`line_hz=None` is today's behavior bit-for-bit (scan snapshots untouched).
+**Architecture:** A stateful `SyncTracker` (one per view session) seeds the actual line frequency once from an rfft peak (parabolic-interpolated, searched within ±1% of nominal, clamped to ±2% of nominal, and confirmed by a 2nd-harmonic prominence gate), and carries the vertical-blanking row across chunks. `slice_lines` gains a `line_hz` override that always reshapes at the rounded integer samples-per-line; a new `deshear` corrects the fractional-samples-per-line residual with a cheap per-row gather; `_align_vsync` gains a low-mean-AND-low-variance detector with a predicted-phase bias. All of it engages only when a tracker is passed — `tracker=None`/`line_hz=None` is today's behavior bit-for-bit (scan snapshots untouched).
 
 **Tech Stack:** Python 3 / numpy (no new deps), pytest with synthetic CVBS (`agent/video/synth.py`).
 
@@ -14,7 +14,7 @@
 
 - Pure numpy — no new deps.
 - `tracker=None` / `line_hz=None` defaults reproduce the current output bit-for-bit (golden regression); the scan path (`pipeline.py`, `video_emit`) calls `reconstruct_frames` without a tracker and must not change.
-- Line-rate lock: parabolic rfft-peak refine, EMA not needed (seed once per session — the crystal is stable within a session); clamp the refined rate to ±0.5% of nominal, else keep nominal and `locked=False`.
+- Line-rate lock: parabolic rfft-peak refine, EMA not needed (seed once per session — the crystal is stable within a session and a per-chunk rfft would blow the Pi budget); search the peak within ±1% of nominal, clamp the refined rate to ±2% of nominal, and require a prominent 2nd harmonic at exactly 2x the candidate to confirm a real line rate; else keep nominal and `locked=False`. Lock is guaranteed within ±2% of nominal, fails safe to nominal just outside that band, and is best-effort beyond it.
 - Line-rate override path in `slice_lines` ALWAYS reshapes at `round(fs/line_hz)` (never `np.interp` — that would undo 2b); the sub-integer residual is corrected by `deshear`.
 - Preserve the 6 MS/s `--pipeline` gate (`dropped_chunks=0`); deshear runs only on the fps-budget fields.
 - Tests: `python -m pytest agent/video/tests -q` and `agent/scan/tests -q`.
@@ -92,9 +92,9 @@ git commit -m "test(view): make_cvbs line_hz override for off-nominal sync"
 - Consumes: `LINE_HZ` from `standard`; `make_cvbs`/`fm_modulate` + `fm_demod`/`lowpass` in tests.
 - Produces:
   - `SyncTracker(standard)` — `.line_hz` (float, init `LINE_HZ[standard]`), `.locked` (bool, init False), `.vsync_row` (int|None, init None).
-  - `.seed(baseband, fs)` — one-time: rfft the baseband, parabolic-interpolate the magnitude peak in a ±0.4%-of-nominal window around `LINE_HZ[standard]`, clamp the result to ±0.5% of nominal; in range → set `.line_hz`, `.locked=True`; out of range → keep nominal, `.locked=False`. Idempotent-safe to call again (re-seeds).
+  - `.seed(baseband, fs)` — one-time (crystal is stable within a session; a per-chunk rfft would blow the Pi budget): rfft the baseband, parabolic-interpolate the magnitude peak in a ±1%-of-nominal window around `LINE_HZ[standard]`, clamp the result to ±2% of nominal, and require a prominent 2nd harmonic at exactly 2x the candidate to confirm a real line rate (rejects in-window artifacts that aren't the fundamental); in range and confirmed → set `.line_hz`, `.locked=True`; otherwise keep nominal, `.locked=False`. Lock is guaranteed within ±2% of nominal, fails safe to nominal just outside that band, and is best-effort beyond it. Idempotent-safe to call again (re-seeds).
   - `.note_vsync(row)` — store the last locked field-boundary row (Task 4 calls it).
-  - `.status()` — dict `{line_hz, locked, vsync_row}` for the stats log.
+  - `.status()` — dict `{line_hz, locked, vsync_row, nominal}` for the stats log.
 
 - [ ] **Step 1: Write the failing tests**
 

@@ -218,9 +218,12 @@ def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, mailbox_len
         if now - last_log >= log_every_s:
             fps = (written - last_written) / (now - last_log)
             st = sync_status() if sync_status is not None else None
-            sync = (" sync=H%.2f V%s line=%.0fHz" % (
-                        st["line_hz"] / 15625.0 - 1.0, st["vsync_row"], st["line_hz"])
-                    if st else "")
+            if st:
+                vrow = st["vsync_row"] if st["vsync_row"] is not None else "-"
+                sync = (" sync=H%.2f V%s line=%.0fHz"
+                        % (st["line_hz"] / st["nominal"] - 1.0, vrow, st["line_hz"]))
+            else:
+                sync = ""
             LOG.info("view stream: %.1f fps, queue=%d, mailbox=%d, dropped_frames=%d, "
                      "dropped_chunks=%d%s",
                      fps, len(q), mailbox_len() if mailbox_len is not None else 0,
@@ -296,7 +299,7 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                     target=writer_loop, args=(q, pacer, enc, stop_event, err),
                     kwargs={"dropped_chunks": lambda: mailbox.dropped,
                             "mailbox_len": lambda: len(mailbox),
-                            "sync_status": (lambda: tracker.status()) if tracker else None,
+                            "sync_status": lambda: tracker.status(),
                             "clock": clock},
                     daemon=True)
                 writer.start()

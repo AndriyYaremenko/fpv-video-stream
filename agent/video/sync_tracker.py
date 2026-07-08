@@ -84,4 +84,5 @@ class SyncTracker:
         self.vsync_row = int(row)
 
     def status(self):
-        return {"line_hz": self.line_hz, "locked": self.locked, "vsync_row": self.vsync_row}
+        return {"line_hz": self.line_hz, "locked": self.locked,
+                "vsync_row": self.vsync_row, "nominal": self._nominal}

@@ -451,7 +451,8 @@ def test_writer_loop_stats_includes_sync(caplog):
     with caplog.at_level(logging.INFO):
         writer_loop(q, _Pacer(), _FakeProc(), threading.Event(), {"msg": None},
                     dropped_chunks=lambda: 0, mailbox_len=lambda: 1,
-                    sync_status=lambda: {"line_hz": 15705.0, "locked": True, "vsync_row": 37},
+                    sync_status=lambda: {"line_hz": 15705.0, "locked": True, "vsync_row": 37,
+                                         "nominal": 15625.0},
                     clock=clock)
     line = [r.getMessage() for r in caplog.records if "view stream:" in r.getMessage()][0]
     assert "line=15705" in line and "V37" in line
