@@ -28,20 +28,22 @@ def slice_lines(baseband, fs, standard):
 
 
 def build_frame(rows, width=720, blank_frac=0.18):
-    """Drop sync+blanking, resample each active line to `width` px (vectorized)."""
+    """Drop sync+blanking, resample each active line to `width` px (vectorized).
+    Computes in the input dtype — the view chain stays float32."""
     if rows.shape[0] == 0:
-        return np.zeros((0, width))
+        return np.zeros((0, width), dtype=rows.dtype if rows.size else np.float32)
     start = int(rows.shape[1] * blank_frac)
     active = rows[:, start:]
     src_w = active.shape[1]
     if src_w < 2:
-        return np.zeros((rows.shape[0], width))
+        return np.zeros((rows.shape[0], width), dtype=rows.dtype)
     ratio = (src_w - 1) / (width - 1) if width > 1 else 0.0
-    pos = np.arange(width) * ratio
-    lo = np.floor(pos).astype(int)
+    pos = np.arange(width, dtype=np.float32) * np.float32(ratio)
+    lo = np.floor(pos).astype(np.int32)
     hi = np.minimum(lo + 1, src_w - 1)
     frac = pos - lo
-    return active[:, lo] * (1.0 - frac) + active[:, hi] * frac
+    result = active[:, lo] * (np.float32(1.0) - frac) + active[:, hi] * frac
+    return result.astype(active.dtype)
 
 
 def _align_vsync(rows, win=6):
@@ -54,7 +56,7 @@ def _align_vsync(rows, win=6):
         return rows
     m = rows.mean(axis=1)
     ext = np.concatenate([m, m[:win - 1]])                    # circular windows
-    sums = np.convolve(ext, np.ones(win), mode="valid")[:n]
+    sums = np.convolve(ext, np.ones(win, dtype=ext.dtype), mode="valid")[:n]
     k = int(np.argmin(sums))
     depth = float(np.median(m) - sums[k] / win)
     spread = float(m.max() - m.min())
@@ -63,20 +65,25 @@ def _align_vsync(rows, win=6):
     return np.roll(rows, -k, axis=0)
 
 
-def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18):
+def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18, budget=None):
     """Slice into lines, chunk into FIELDS (LINES/2), align each to its vertical
     sync, build each frame.
 
     Real CVBS is interlaced: every field is a complete vertical scan of the
     picture, so stacking a full 2-field frame shows the image TWICE. One field
-    per output frame gives a single copy at half vertical resolution."""
+    per output frame gives a single copy at half vertical resolution.
+
+    budget: build at most this many frames, picked EVENLY across the chunk's
+    fields (the streamer's fps budget) — skipped fields are never aligned or
+    resampled, which is the point: they would be discarded downstream anyway."""
     rows = slice_lines(baseband, fs, standard)
     field = LINES[standard] // 2
-    frames = []
     n_frames = rows.shape[0] // field
-    for f in range(n_frames):
-        frames.append(build_frame(_align_vsync(rows[f * field:(f + 1) * field]),
-                                  width, blank_frac))
+    idx = range(n_frames)
+    if budget is not None and 0 < budget < n_frames:
+        idx = np.round(np.linspace(0, n_frames - 1, budget)).astype(int)
+    frames = [build_frame(_align_vsync(rows[f * field:(f + 1) * field]), width, blank_frac)
+              for f in idx]
     if not frames:                       # fewer than one full field of lines
         frames.append(build_frame(_align_vsync(rows), width, blank_frac))
     return frames

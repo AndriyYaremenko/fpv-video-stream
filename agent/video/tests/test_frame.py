@@ -108,3 +108,32 @@ def test_slice_lines_preserves_float32():
     fs = 6e6
     bb = np.random.default_rng(4).normal(size=int(fs * 0.01)).astype(np.float32)
     assert slice_lines(bb, fs, "PAL").dtype == np.float32
+
+
+def test_reconstruct_budget_picks_even_subset_of_identical_frames():
+    fs = 4e6
+    img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("PAL", img, fs, frames=6)     # 12 fields
+    full = reconstruct_frames(bb, fs, "PAL", width=320)
+    k = 5
+    budgeted = reconstruct_frames(bb, fs, "PAL", width=320, budget=k)
+    assert len(budgeted) == k
+    expect_idx = np.round(np.linspace(0, len(full) - 1, k)).astype(int)
+    for got, idx in zip(budgeted, expect_idx):
+        assert np.allclose(got, full[idx], atol=1e-6)
+
+
+def test_reconstruct_budget_none_and_oversized_are_noops():
+    fs = 4e6
+    img = np.tile(np.linspace(0, 1, 32), (32, 1))
+    bb = make_cvbs("PAL", img, fs, frames=3)
+    full = reconstruct_frames(bb, fs, "PAL", width=320)
+    assert len(reconstruct_frames(bb, fs, "PAL", width=320, budget=None)) == len(full)
+    assert len(reconstruct_frames(bb, fs, "PAL", width=320, budget=999)) == len(full)
+
+
+def test_build_frame_pipeline_stays_float32():
+    fs = 6e6
+    bb = np.random.default_rng(5).normal(size=int(fs * 0.05)).astype(np.float32)
+    frames = reconstruct_frames(bb, fs, "PAL", width=360)
+    assert frames and frames[0].dtype == np.float32
