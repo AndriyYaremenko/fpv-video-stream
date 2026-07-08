@@ -56,6 +56,28 @@ def test_chunk_to_frames_fixed_size_uint8():
     assert frames[0].std() > 5                  # picture content, not a flat field
 
 
+def test_iq_from_int8_fast_is_scaled_dweller():
+    from dweller import iq_from_int8
+    from stream_demod import iq_from_int8_fast
+    raw = bytes(range(0, 128)) + bytes([255, 254, 128, 127])
+    fast = iq_from_int8_fast(raw)
+    ref = iq_from_int8(raw) * 128.0
+    assert fast.dtype == np.complex64
+    assert np.array_equal(fast, ref)             # /128 and *128 are exact in float32
+
+
+def test_chunk_to_frames_respects_budget():
+    fs = 4e6
+    img = (np.indices((48, 48)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("PAL", img, fs, frames=6)
+    iq = fm_modulate(bb, fs, 2e6)
+    full = chunk_to_frames(iq, fs, "PAL", width=320, height=VIEW_HEIGHT["PAL"],
+                           lpf_cutoff_hz=2.5e6)
+    lim = chunk_to_frames(iq, fs, "PAL", width=320, height=VIEW_HEIGHT["PAL"],
+                          lpf_cutoff_hz=2.5e6, budget=4)
+    assert len(full) > 4 and len(lim) == 4
+
+
 import io
 import threading
 

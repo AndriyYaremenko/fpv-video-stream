@@ -52,11 +52,13 @@ def resize_rows(img, height):
     return img[idx, :]
 
 
-def chunk_to_frames(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18):
-    """One IQ chunk -> list of fixed-size uint8 gray frames (height x width)."""
+def chunk_to_frames(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18,
+                    budget=None):
+    """One IQ chunk -> list of fixed-size uint8 gray frames (height x width).
+    budget caps how many fields are even built (the streamer's fps budget)."""
     bb = lowpass(fm_demod(iq), fs, lpf_cutoff_hz)
     out = []
-    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac):
+    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac, budget=budget):
         if fr.size == 0:
             continue
         out.append(resize_rows(normalize_luma(fr), height))
@@ -67,9 +69,16 @@ import subprocess
 import threading
 import time
 
-from dweller import iq_from_int8            # agent/scan flat module (shared sys.path)
-
 CHUNK_S = 0.5
+
+
+def iq_from_int8_fast(raw):
+    """int8 IQ -> complex64 WITHOUT the /128 scale: one fewer pass over the chunk.
+    FM demod, standard detection and per-frame luma normalization are all
+    scale-invariant. The SCAN path keeps dweller.iq_from_int8 — its dBm
+    features are calibrated to the /128 scale."""
+    data = np.frombuffer(raw, dtype=np.int8).astype(np.float32)
+    return data.view(np.complex64)
 
 
 class ChunkMailbox:
@@ -252,7 +261,7 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                     break
                 sleep(0.05)
                 continue
-            iq = iq_from_int8(buf)
+            iq = iq_from_int8_fast(buf)
             if standard is None:
                 bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
                 standard = pick_standard(bb, fs, vcfg.view_standard,
@@ -272,7 +281,8 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                          height, vcfg.view_fps)
             for fr in select_frames(
                     chunk_to_frames(iq, fs, standard, vcfg.view_width, height,
-                                    vcfg.lpf_cutoff_hz, vcfg.blank_frac),
+                                    vcfg.lpf_cutoff_hz, vcfg.blank_frac,
+                                    budget=int(round(CHUNK_S * vcfg.view_fps))),
                     CHUNK_S, vcfg.view_fps):
                 q.put(fr.tobytes())
         if error is None and err["msg"]:

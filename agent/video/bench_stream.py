@@ -29,7 +29,7 @@ from synth import make_cvbs, fm_modulate, to_int8
 
 def iq_from_int8(raw):
     data = np.frombuffer(raw, dtype=np.int8).astype(np.float32)
-    return (data[0::2] + 1j * data[1::2]) / 128.0
+    return data.view(np.complex64)               # no /128: matches the view path
 
 
 def bench_pipeline(fs, chunk_s, rounds, width, fps):
@@ -37,7 +37,6 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
     pipeline (mailbox -> demod -> queue -> paced writer) and report drops."""
     from stream_demod import (ChunkMailbox, FrameQueue, FramePacer, writer_loop,
                               chunk_to_frames, select_frames, VIEW_HEIGHT)
-    from dweller import iq_from_int8 as iq_from_int8_dweller
     img = (np.indices((64, 64)).sum(axis=0) % 2).astype(float)
     bb = make_cvbs("PAL", img, fs, frames=max(1, int(round(chunk_s * 25))))
     raw = to_int8(fm_modulate(bb, fs, 4e6), noise_std=0.05)
@@ -85,8 +84,9 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
                 break
             time.sleep(0.005)
             continue
-        iq = iq_from_int8_dweller(buf)
-        for fr in select_frames(chunk_to_frames(iq, fs, "PAL", width, height, 5e6),
+        iq = iq_from_int8(buf)
+        for fr in select_frames(chunk_to_frames(iq, fs, "PAL", width, height, 5e6,
+                                                budget=int(round(chunk_s * fps))),
                                 chunk_s, fps):
             q.put(fr.tobytes())
     q.close()
