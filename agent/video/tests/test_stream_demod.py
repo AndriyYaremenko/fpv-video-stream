@@ -56,6 +56,28 @@ def test_chunk_to_frames_fixed_size_uint8():
     assert frames[0].std() > 5                  # picture content, not a flat field
 
 
+def test_iq_from_int8_fast_is_scaled_dweller():
+    from dweller import iq_from_int8
+    from stream_demod import iq_from_int8_fast
+    raw = bytes(range(0, 128)) + bytes([255, 254, 128, 127])
+    fast = iq_from_int8_fast(raw)
+    ref = iq_from_int8(raw) * 128.0
+    assert fast.dtype == np.complex64
+    assert np.array_equal(fast, ref)             # /128 and *128 are exact in float32
+
+
+def test_chunk_to_frames_respects_budget():
+    fs = 4e6
+    img = (np.indices((48, 48)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("PAL", img, fs, frames=6)
+    iq = fm_modulate(bb, fs, 2e6)
+    full = chunk_to_frames(iq, fs, "PAL", width=320, height=VIEW_HEIGHT["PAL"],
+                           lpf_cutoff_hz=2.5e6)
+    lim = chunk_to_frames(iq, fs, "PAL", width=320, height=VIEW_HEIGHT["PAL"],
+                          lpf_cutoff_hz=2.5e6, budget=4)
+    assert len(full) > 4 and len(lim) == 4
+
+
 import io
 import threading
 
@@ -164,8 +186,12 @@ def test_run_stream_times_out():
     fs = 4e6
     chunk = _chunk_bytes(fs)
 
-    class _Endless:                                  # capture never EOFs: timeout must end it
+    class _Endless:                                  # capture never EOFs during the test...
+        reads = 0
         def read(self, n):
+            _Endless.reads += 1
+            if _Endless.reads > 100:                 # ...but dies afterwards: leaked daemon
+                return b""                           # readers must not outlive the test
             _t.sleep(0.001)      # yield the GIL: a hot spin starves the demod thread (and,
             return chunk         # as a leaked daemon, every later test in the session)
 
@@ -185,16 +211,25 @@ def test_run_stream_times_out():
 from stream_demod import ChunkMailbox
 
 
-def test_chunk_mailbox_counts_overwrites():
+def test_chunk_mailbox_fifo_depth2_drops_oldest():
     mb = ChunkMailbox()
     assert mb.take() is None
     mb.put(b"a")
     assert mb.take() == b"a" and mb.take() is None
     assert mb.dropped == 0
     mb.put(b"b")
-    mb.put(b"c")                     # unconsumed "b" is replaced -> 1 dropped chunk
+    mb.put(b"c")                     # depth 2: both retained, in order
+    assert mb.dropped == 0
+    mb.put(b"d")                     # overflow: oldest ("b") dropped
     assert mb.dropped == 1
-    assert mb.take() == b"c"
+    assert mb.take() == b"c" and mb.take() == b"d" and mb.take() is None
+
+
+def test_chunk_mailbox_custom_depth():
+    mb = ChunkMailbox(depth=1)       # old single-slot semantics
+    mb.put(b"x")
+    mb.put(b"y")
+    assert mb.dropped == 1 and mb.take() == b"y"
 
 
 from stream_demod import FrameQueue
@@ -285,9 +320,10 @@ def test_writer_loop_logs_stats_line(caplog):
 
     with caplog.at_level(logging.INFO):
         writer_loop(q, _Pacer(), _FakeProc(), threading.Event(), {"msg": None},
-                    dropped_chunks=lambda: 7, clock=clock)
+                    dropped_chunks=lambda: 7, mailbox_len=lambda: 2, clock=clock)
     lines = [r.getMessage() for r in caplog.records if "dropped_chunks" in r.getMessage()]
     assert lines and "dropped_chunks=7" in lines[0] and "queue=" in lines[0]
+    assert "mailbox=2" in lines[0]
 
 
 def test_run_stream_writes_every_selected_frame_of_a_chunk():
@@ -327,8 +363,12 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
     fs = 4e6
     chunk = _chunk_bytes(fs)
 
-    class _Endless:
+    class _Endless:                                  # capture never EOFs during the test...
+        reads = 0
         def read(self, n):
+            _Endless.reads += 1
+            if _Endless.reads > 100:                 # ...but dies afterwards: leaked daemon
+                return b""                           # readers must not outlive the test
             _time.sleep(0.001)   # yield the GIL: a hot spin starves the demod thread
             return chunk
 
@@ -346,6 +386,24 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
     err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=30.0, popen=popen,
                      clock=lambda: next(ticks) * 0.3, sleep=lambda s: _time.sleep(0.001))
     assert err == "ffmpeg pipe closed"
+
+
+def test_run_stream_low_fps_still_streams_frames():
+    # VIEW_FPS=1 rounds the naive per-chunk budget to 0 — the guard must keep >=1.
+    fs = 4e6
+    procs = []
+
+    def popen(cmd, **kw):
+        p = _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs))) if cmd[0] == "hackrf_transfer" else _FakeProc()
+        procs.append(p)
+        return p
+
+    cfg = _vcfg()
+    cfg.view_fps = 1.0
+    t = [0.0]
+    run_stream(cfg, 947.0, threading.Event(), max_s=60.0, popen=popen,
+               clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert len(procs[1].stdin.getvalue()) == 320 * 288       # exactly the 1-frame budget
 
 
 def test_run_stream_kills_capture_before_draining_the_writer():

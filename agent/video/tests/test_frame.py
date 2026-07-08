@@ -2,7 +2,7 @@ import numpy as np
 
 from frame import slice_lines, build_frame, reconstruct_frames, pick_sharpest, laplacian_var
 from synth import make_cvbs
-from standard import LINES
+from standard import LINES, LINE_HZ
 
 
 def _gradient(h=120, w=120):
@@ -80,3 +80,103 @@ def test_vsync_alignment_survives_arbitrary_chunk_offset():
     prof_i = np.interp(np.linspace(0, 1, 120), np.linspace(0, 1, len(prof)), prof)
     corr = np.corrcoef(prof_i, src.mean(axis=1))[0, 1]
     assert corr > 0.7
+
+
+def _slice_interp_reference(bb, fs, standard):
+    # The pre-optimization algorithm, kept as an oracle.
+    bb = np.asarray(bb, dtype=np.float64)
+    spl = fs / LINE_HZ[standard]
+    spl_i = int(round(spl))
+    n = int(len(bb) // spl)
+    starts = (np.arange(n) * spl)[:, None]
+    cols = np.arange(spl_i)[None, :]
+    rows = np.interp((starts + cols).ravel(), np.arange(len(bb)), bb).reshape(n, spl_i)
+    k = int(np.argmin(rows.mean(axis=0)))
+    return np.roll(rows, -k, axis=1)
+
+
+def test_slice_lines_integer_spl_equals_interp_reference():
+    fs = 6e6                                     # 6e6 / 15625 == 384 exactly
+    bb = np.random.default_rng(3).normal(size=int(fs * 0.02))
+    fast = slice_lines(bb, fs, "PAL")
+    ref = _slice_interp_reference(bb, fs, "PAL")
+    assert fast.shape == ref.shape
+    assert np.allclose(fast, ref, atol=1e-12)    # np.interp at grid positions == grid values
+
+
+def test_slice_lines_preserves_float32():
+    fs = 6e6
+    bb = np.random.default_rng(4).normal(size=int(fs * 0.01)).astype(np.float32)
+    assert slice_lines(bb, fs, "PAL").dtype == np.float32
+
+
+def test_reconstruct_budget_picks_even_subset_of_identical_frames():
+    fs = 4e6
+    img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("PAL", img, fs, frames=6)     # 12 fields
+    full = reconstruct_frames(bb, fs, "PAL", width=320)
+    k = 5
+    budgeted = reconstruct_frames(bb, fs, "PAL", width=320, budget=k)
+    assert len(budgeted) == k
+    expect_idx = np.round(np.linspace(0, len(full) - 1, k)).astype(int)
+    for got, idx in zip(budgeted, expect_idx):
+        assert np.allclose(got, full[idx], atol=1e-6)
+
+
+def test_reconstruct_budget_none_and_oversized_are_noops():
+    fs = 4e6
+    img = np.tile(np.linspace(0, 1, 32), (32, 1))
+    bb = make_cvbs("PAL", img, fs, frames=3)
+    full = reconstruct_frames(bb, fs, "PAL", width=320)
+    assert len(reconstruct_frames(bb, fs, "PAL", width=320, budget=None)) == len(full)
+    assert len(reconstruct_frames(bb, fs, "PAL", width=320, budget=999)) == len(full)
+
+
+def test_build_frame_pipeline_stays_float32():
+    fs = 6e6
+    bb = np.random.default_rng(5).normal(size=int(fs * 0.05)).astype(np.float32)
+    frames = reconstruct_frames(bb, fs, "PAL", width=360)
+    assert frames and frames[0].dtype == np.float32
+
+
+def test_reconstruct_budget_zero_returns_nothing():
+    fs = 4e6
+    img = np.tile(np.linspace(0, 1, 32), (32, 1))
+    bb = make_cvbs("PAL", img, fs, frames=2)
+    assert reconstruct_frames(bb, fs, "PAL", width=320, budget=0) == []
+
+
+def test_build_frame_float64_path_bit_identical_to_reference():
+    rng = np.random.default_rng(9)
+    rows = rng.normal(size=(64, 384))                # float64
+    got = build_frame(rows, width=720)
+    start = int(rows.shape[1] * 0.18)                # pre-optimization reference
+    active = rows[:, start:]
+    src_w = active.shape[1]
+    ratio = (src_w - 1) / (720 - 1)
+    pos = np.arange(720) * ratio
+    lo = np.floor(pos).astype(int)
+    hi = np.minimum(lo + 1, src_w - 1)
+    frac = pos - lo
+    ref = active[:, lo] * (1.0 - frac) + active[:, hi] * frac
+    assert got.dtype == np.float64
+    assert np.array_equal(got, ref)                  # bit-for-bit
+
+
+def test_build_frame_float32_arithmetic_no_float64_roundtrip():
+    rows = np.random.default_rng(10).normal(size=(64, 384)).astype(np.float32)
+    got = build_frame(rows, width=360)
+    assert got.dtype == np.float32
+    ref = build_frame(rows.astype(np.float64), width=360)
+    # atol=2e-4 (not 1e-4): genuine float32 arithmetic carries ulp-level error in
+    # `pos`/`frac` (~2e-5 at position magnitude ~310) that this synthetic
+    # uncorrelated-noise fixture amplifies via large adjacent-sample deltas
+    # (~5-6) -- root-caused via manual index/frac inspection: `lo` picks the
+    # identical index on both paths, only the fractional weight differs. Real
+    # (spatially smooth) video would not amplify this the same way.
+    assert np.allclose(got, ref, atol=2e-4)          # float32 result matches float64 math
+
+
+def test_build_frame_empty_rows_keeps_dtype():
+    assert build_frame(np.zeros((0, 384)), width=320).dtype == np.float64
+    assert build_frame(np.zeros((0, 384), dtype=np.float32), width=320).dtype == np.float32

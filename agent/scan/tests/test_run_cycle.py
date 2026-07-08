@@ -1,4 +1,5 @@
 import json
+import types
 
 import numpy as np
 import pytest
@@ -225,7 +226,7 @@ def test_main_exits_after_consecutive_bladerf_failures(monkeypatch):
         sleeps[0] += 1
         if sleeps[0] > 50:
             raise AssertionError("main() kept looping; expected SystemExit after repeated bladeRF failures")
-    monkeypatch.setattr(main.time, "sleep", _sleep)
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=_sleep))
 
     with pytest.raises(SystemExit):
         main.main()
@@ -255,7 +256,7 @@ def test_main_bladerf_failure_counter_resets_on_success(monkeypatch):
             raise KeyboardInterrupt()               # stop the test loop cleanly
         return {"ok": True}
     monkeypatch.setattr(main, "run_cycle", _flaky)
-    monkeypatch.setattr(main.time, "sleep", lambda s: None)
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=lambda s: None))
 
     with pytest.raises(KeyboardInterrupt):
         main.main()                                  # KeyboardInterrupt ≠ SystemExit: no escalation happened
@@ -529,7 +530,7 @@ def test_main_enters_pending_view_without_the_idle_sleep(monkeypatch):
     monkeypatch.setattr(main, "run_cycle", _cycle)
 
     sleeps = []
-    monkeypatch.setattr(main.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=lambda s: sleeps.append(s)))
 
     with pytest.raises(KeyboardInterrupt):
         main.main()

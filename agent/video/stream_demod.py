@@ -52,11 +52,13 @@ def resize_rows(img, height):
     return img[idx, :]
 
 
-def chunk_to_frames(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18):
-    """One IQ chunk -> list of fixed-size uint8 gray frames (height x width)."""
+def chunk_to_frames(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18,
+                    budget=None):
+    """One IQ chunk -> list of fixed-size uint8 gray frames (height x width).
+    budget caps how many fields are even built (the streamer's fps budget)."""
     bb = lowpass(fm_demod(iq), fs, lpf_cutoff_hz)
     out = []
-    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac):
+    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac, budget=budget):
         if fr.size == 0:
             continue
         out.append(resize_rows(normalize_luma(fr), height))
@@ -67,30 +69,46 @@ import subprocess
 import threading
 import time
 
-from dweller import iq_from_int8            # agent/scan flat module (shared sys.path)
-
 CHUNK_S = 0.5
 
 
-class ChunkMailbox:
-    """Single-slot 'latest chunk' handoff from the USB reader to the demod loop.
-    Replacing an unconsumed chunk counts as a dropped chunk (air lost)."""
+def iq_from_int8_fast(raw):
+    """int8 IQ -> complex64 WITHOUT the /128 scale: one fewer pass over the chunk.
+    FM demod, standard detection and per-frame luma normalization are all
+    scale-invariant. The SCAN path keeps dweller.iq_from_int8 — its dBm
+    features are calibrated to the /128 scale."""
+    data = np.frombuffer(raw, dtype=np.int8).astype(np.float32)
+    return data.view(np.complex64)
 
-    def __init__(self):
+
+class ChunkMailbox:
+    """Bounded FIFO handoff from the USB reader to the demod loop.
+
+    depth=2 absorbs an isolated CPU spike: the demod falls one chunk behind and
+    catches back up because its average cost is below realtime. Overflow drops
+    the OLDEST chunk (air lost, counted — the stats-log metric). take() pops in
+    air order, preserving continuity."""
+
+    def __init__(self, depth=2):
         self._lock = threading.Lock()
-        self._buf = None
+        self._d = deque()
+        self._depth = max(1, int(depth))
         self.dropped = 0
 
     def put(self, buf):
         with self._lock:
-            if self._buf is not None:
+            if len(self._d) >= self._depth:
+                self._d.popleft()
                 self.dropped += 1
-            self._buf = buf
+            self._d.append(buf)
 
     def take(self):
         with self._lock:
-            buf, self._buf = self._buf, None
-            return buf
+            return self._d.popleft() if self._d else None
+
+    def __len__(self):
+        with self._lock:
+            return len(self._d)
 
 
 class FrameQueue:
@@ -166,8 +184,8 @@ class FramePacer:
         self._next = max(self._next + self._period, self._clock() - self._period)
 
 
-def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, clock=None,
-                log_every_s=10.0):
+def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, mailbox_len=None,
+                clock=None, log_every_s=10.0):
     """Writer-thread body: pace frames from the queue into ffmpeg stdin.
 
     Runs until stop_event (immediate, no drain — a retune/stop must not flush
@@ -197,9 +215,9 @@ def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, clock=None,
         now = clock()
         if now - last_log >= log_every_s:
             fps = (written - last_written) / (now - last_log)
-            LOG.info("view stream: %.1f fps, queue=%d, dropped_frames=%d, dropped_chunks=%d",
-                     fps, len(q), q.dropped,
-                     dropped_chunks() if dropped_chunks is not None else 0)
+            LOG.info("view stream: %.1f fps, queue=%d, mailbox=%d, dropped_frames=%d, dropped_chunks=%d",
+                     fps, len(q), mailbox_len() if mailbox_len is not None else 0,
+                     q.dropped, dropped_chunks() if dropped_chunks is not None else 0)
             last_log = now
             last_written = written
 
@@ -240,6 +258,7 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
 
     threading.Thread(target=_reader, daemon=True).start()
     t_end = clock() + max_s
+    frame_budget = max(1, int(round(CHUNK_S * vcfg.view_fps)))   # never 0: a legal low fps must still stream
     try:
         while not stop_event.is_set() and clock() < t_end:
             if err["msg"]:
@@ -252,7 +271,7 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                     break
                 sleep(0.05)
                 continue
-            iq = iq_from_int8(buf)
+            iq = iq_from_int8_fast(buf)
             if standard is None:
                 bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
                 standard = pick_standard(bb, fs, vcfg.view_standard,
@@ -265,14 +284,16 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                 pacer = FramePacer(vcfg.view_fps, enc.stdin.write, clock=clock, sleep=sleep)
                 writer = threading.Thread(
                     target=writer_loop, args=(q, pacer, enc, stop_event, err),
-                    kwargs={"dropped_chunks": lambda: mailbox.dropped, "clock": clock},
+                    kwargs={"dropped_chunks": lambda: mailbox.dropped,
+                            "mailbox_len": lambda: len(mailbox), "clock": clock},
                     daemon=True)
                 writer.start()
                 LOG.info("view stream: %s %dx%d @%.0ffps", standard, vcfg.view_width,
                          height, vcfg.view_fps)
             for fr in select_frames(
                     chunk_to_frames(iq, fs, standard, vcfg.view_width, height,
-                                    vcfg.lpf_cutoff_hz, vcfg.blank_frac),
+                                    vcfg.lpf_cutoff_hz, vcfg.blank_frac,
+                                    budget=frame_budget),
                     CHUNK_S, vcfg.view_fps):
                 q.put(fr.tobytes())
         if error is None and err["msg"]:
