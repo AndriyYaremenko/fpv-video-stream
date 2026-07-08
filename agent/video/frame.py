@@ -3,29 +3,50 @@ import numpy as np
 from standard import LINE_HZ, LINES
 
 
-def slice_lines(baseband, fs, standard):
+def slice_lines(baseband, fs, standard, line_hz=None):
     """Slice the baseband into sync-aligned line rows: shape (n_lines, samples_per_line).
 
-    When fs is an integer multiple of the line rate (PAL at 4/6/8 MS/s) the
-    slicing is a plain reshape — identical output, no per-sample interpolation.
-    dtype follows the input (the view chain stays float32) (fast path; the
-    NTSC interp fallback still returns float64)."""
+    Integer samples-per-line (PAL at 4/6/8 MS/s) -> plain reshape, identical
+    output, no per-sample interpolation; dtype follows the input.
+
+    line_hz overrides the nominal line rate (the tracker's measured value) and
+    ALWAYS reshapes at the rounded integer spl — never np.interp (that would
+    undo the fast path); the sub-integer residual is corrected by deshear."""
     bb = np.asarray(baseband)
-    spl = fs / LINE_HZ[standard]
-    spl_i = int(round(spl))
-    n = int(len(bb) // spl)
-    if n < 2 or spl_i < 4:
-        return np.zeros((0, max(spl_i, 1)))
-    if abs(spl - spl_i) < 1e-9:                  # integer samples-per-line: exact fast path
+    if line_hz is not None:
+        spl_i = int(round(fs / line_hz))
+        n = len(bb) // spl_i
+        if n < 2 or spl_i < 4:
+            return np.zeros((0, max(spl_i, 1)))
         rows = bb[:n * spl_i].reshape(n, spl_i)
-    else:                                        # e.g. NTSC: line rate not integer-divisible
-        starts = (np.arange(n) * spl)[:, None]
-        cols = np.arange(spl_i)[None, :]
-        pos = (starts + cols).ravel()
-        rows = np.interp(pos, np.arange(len(bb)), bb.astype(np.float64)).reshape(n, spl_i)
-    # Align sync (lowest mean column) to col 0.
+    else:
+        spl = fs / LINE_HZ[standard]
+        spl_i = int(round(spl))
+        n = int(len(bb) // spl)
+        if n < 2 or spl_i < 4:
+            return np.zeros((0, max(spl_i, 1)))
+        if abs(spl - spl_i) < 1e-9:
+            rows = bb[:n * spl_i].reshape(n, spl_i)
+        else:
+            starts = (np.arange(n) * spl)[:, None]
+            cols = np.arange(spl_i)[None, :]
+            pos = (starts + cols).ravel()
+            rows = np.interp(pos, np.arange(len(bb)), bb.astype(np.float64)).reshape(n, spl_i)
     sync_col = int(np.argmin(rows.mean(axis=0)))
     return np.roll(rows, -sync_col, axis=1)
+
+
+def deshear(rows, drift_per_row):
+    """Undo linear horizontal shear: shift row r left-circularly by
+    round(r * drift_per_row) samples (a per-row gather). drift_per_row is the
+    fractional samples-per-line the sync tip walks after integer-spl slicing;
+    0 -> identity."""
+    if drift_per_row == 0 or rows.shape[0] == 0:
+        return rows
+    n, w = rows.shape
+    shift = np.round(np.arange(n) * drift_per_row).astype(np.int64)
+    idx = (np.arange(w)[None, :] + shift[:, None]) % w
+    return np.take_along_axis(rows, idx, axis=1)
 
 
 def build_frame(rows, width=720, blank_frac=0.18):

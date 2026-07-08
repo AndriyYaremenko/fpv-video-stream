@@ -1,6 +1,6 @@
 import numpy as np
 
-from frame import slice_lines, build_frame, reconstruct_frames, pick_sharpest, laplacian_var
+from frame import slice_lines, build_frame, reconstruct_frames, pick_sharpest, laplacian_var, deshear
 from synth import make_cvbs
 from standard import LINES, LINE_HZ
 
@@ -180,3 +180,28 @@ def test_build_frame_float32_arithmetic_no_float64_roundtrip():
 def test_build_frame_empty_rows_keeps_dtype():
     assert build_frame(np.zeros((0, 384)), width=320).dtype == np.float64
     assert build_frame(np.zeros((0, 384), dtype=np.float32), width=320).dtype == np.float32
+
+
+def test_slice_lines_line_hz_override_uses_rounded_reshape():
+    fs = 6e6
+    bb = np.random.default_rng(3).normal(size=int(fs * 0.02)).astype(np.float32)
+    rows = slice_lines(bb, fs, "PAL", line_hz=15705.0)     # spl = 382.04 -> reshape at 382
+    assert rows.shape[1] == 382
+    assert rows.dtype == np.float32                         # override path never coerces float64
+
+
+def test_deshear_straightens_a_known_shear():
+    # A straight vertical bar, then sheared by rolling row r by round(r*D); deshear undoes it.
+    n, w, D = 40, 100, 0.7
+    base = np.zeros((n, w), dtype=np.float32)
+    base[:, 50] = 1.0                                       # vertical bar at col 50
+    sheared = np.stack([np.roll(base[r], int(round(r * D))) for r in range(n)])
+    fixed = deshear(sheared, D)
+    # every row's bar returns to col 50 (within +/-1 px from integer rounding)
+    bar_cols = fixed.argmax(axis=1)
+    assert np.all(np.abs(bar_cols - 50) <= 1)
+
+
+def test_deshear_zero_is_identity():
+    rows = np.random.default_rng(1).normal(size=(20, 64)).astype(np.float32)
+    assert np.array_equal(deshear(rows, 0.0), rows)
