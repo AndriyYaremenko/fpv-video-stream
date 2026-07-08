@@ -186,8 +186,12 @@ def test_run_stream_times_out():
     fs = 4e6
     chunk = _chunk_bytes(fs)
 
-    class _Endless:                                  # capture never EOFs: timeout must end it
+    class _Endless:                                  # capture never EOFs during the test...
+        reads = 0
         def read(self, n):
+            _Endless.reads += 1
+            if _Endless.reads > 100:                 # ...but dies afterwards: leaked daemon
+                return b""                           # readers must not outlive the test
             _t.sleep(0.001)      # yield the GIL: a hot spin starves the demod thread (and,
             return chunk         # as a leaked daemon, every later test in the session)
 
@@ -359,8 +363,12 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
     fs = 4e6
     chunk = _chunk_bytes(fs)
 
-    class _Endless:
+    class _Endless:                                  # capture never EOFs during the test...
+        reads = 0
         def read(self, n):
+            _Endless.reads += 1
+            if _Endless.reads > 100:                 # ...but dies afterwards: leaked daemon
+                return b""                           # readers must not outlive the test
             _time.sleep(0.001)   # yield the GIL: a hot spin starves the demod thread
             return chunk
 
