@@ -2,7 +2,7 @@ import numpy as np
 
 from frame import slice_lines, build_frame, reconstruct_frames, pick_sharpest, laplacian_var
 from synth import make_cvbs
-from standard import LINES
+from standard import LINES, LINE_HZ
 
 
 def _gradient(h=120, w=120):
@@ -80,3 +80,31 @@ def test_vsync_alignment_survives_arbitrary_chunk_offset():
     prof_i = np.interp(np.linspace(0, 1, 120), np.linspace(0, 1, len(prof)), prof)
     corr = np.corrcoef(prof_i, src.mean(axis=1))[0, 1]
     assert corr > 0.7
+
+
+def _slice_interp_reference(bb, fs, standard):
+    # The pre-optimization algorithm, kept as an oracle.
+    bb = np.asarray(bb, dtype=np.float64)
+    spl = fs / LINE_HZ[standard]
+    spl_i = int(round(spl))
+    n = int(len(bb) // spl)
+    starts = (np.arange(n) * spl)[:, None]
+    cols = np.arange(spl_i)[None, :]
+    rows = np.interp((starts + cols).ravel(), np.arange(len(bb)), bb).reshape(n, spl_i)
+    k = int(np.argmin(rows.mean(axis=0)))
+    return np.roll(rows, -k, axis=1)
+
+
+def test_slice_lines_integer_spl_equals_interp_reference():
+    fs = 6e6                                     # 6e6 / 15625 == 384 exactly
+    bb = np.random.default_rng(3).normal(size=int(fs * 0.02))
+    fast = slice_lines(bb, fs, "PAL")
+    ref = _slice_interp_reference(bb, fs, "PAL")
+    assert fast.shape == ref.shape
+    assert np.allclose(fast, ref, atol=1e-12)    # np.interp at grid positions == grid values
+
+
+def test_slice_lines_preserves_float32():
+    fs = 6e6
+    bb = np.random.default_rng(4).normal(size=int(fs * 0.01)).astype(np.float32)
+    assert slice_lines(bb, fs, "PAL").dtype == np.float32

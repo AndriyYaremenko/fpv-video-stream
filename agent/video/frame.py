@@ -4,17 +4,24 @@ from standard import LINE_HZ, LINES
 
 
 def slice_lines(baseband, fs, standard):
-    """Slice the baseband into sync-aligned line rows: shape (n_lines, samples_per_line)."""
-    bb = np.asarray(baseband, dtype=np.float64)
+    """Slice the baseband into sync-aligned line rows: shape (n_lines, samples_per_line).
+
+    When fs is an integer multiple of the line rate (PAL at 4/6/8 MS/s) the
+    slicing is a plain reshape — identical output, no per-sample interpolation.
+    dtype follows the input (the view chain stays float32)."""
+    bb = np.asarray(baseband)
     spl = fs / LINE_HZ[standard]
     spl_i = int(round(spl))
     n = int(len(bb) // spl)
     if n < 2 or spl_i < 4:
         return np.zeros((0, max(spl_i, 1)))
-    starts = (np.arange(n) * spl)[:, None]
-    cols = np.arange(spl_i)[None, :]
-    pos = (starts + cols).ravel()
-    rows = np.interp(pos, np.arange(len(bb)), bb).reshape(n, spl_i)
+    if abs(spl - spl_i) < 1e-9:                  # integer samples-per-line: exact fast path
+        rows = bb[:n * spl_i].reshape(n, spl_i)
+    else:                                        # e.g. NTSC: line rate not integer-divisible
+        starts = (np.arange(n) * spl)[:, None]
+        cols = np.arange(spl_i)[None, :]
+        pos = (starts + cols).ravel()
+        rows = np.interp(pos, np.arange(len(bb)), bb.astype(np.float64)).reshape(n, spl_i)
     # Align sync (lowest mean column) to col 0.
     sync_col = int(np.argmin(rows.mean(axis=0)))
     return np.roll(rows, -sync_col, axis=1)
