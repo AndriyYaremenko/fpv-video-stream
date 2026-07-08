@@ -8,7 +8,8 @@ def slice_lines(baseband, fs, standard):
 
     When fs is an integer multiple of the line rate (PAL at 4/6/8 MS/s) the
     slicing is a plain reshape — identical output, no per-sample interpolation.
-    dtype follows the input (the view chain stays float32)."""
+    dtype follows the input (the view chain stays float32) (fast path; the
+    NTSC interp fallback still returns float64)."""
     bb = np.asarray(baseband)
     spl = fs / LINE_HZ[standard]
     spl_i = int(round(spl))
@@ -30,8 +31,9 @@ def slice_lines(baseband, fs, standard):
 def build_frame(rows, width=720, blank_frac=0.18):
     """Drop sync+blanking, resample each active line to `width` px (vectorized).
     Computes in the input dtype: float32 stays float32 throughout (no int32
-    promotion to float64); the float64 (scan) path keeps its original float64
-    positions bit-for-bit."""
+    promotion to float64). The float64 path (NTSC interp rows) keeps float64
+    positions bit-for-bit; the live scan/view paths are float32 end-to-end
+    (verified ≤1 LSB output delta vs the old float64 math)."""
     if rows.shape[0] == 0:
         return np.zeros((0, width), dtype=rows.dtype)
     start = int(rows.shape[1] * blank_frac)

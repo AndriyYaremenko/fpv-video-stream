@@ -77,6 +77,7 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
 
     t0 = time.perf_counter()
     height = VIEW_HEIGHT["PAL"]
+    frame_budget = max(1, int(round(chunk_s * fps)))   # never 0: a legal low fps must still stream
     while True:
         buf = mailbox.take()
         if buf is None:
@@ -86,7 +87,7 @@ def bench_pipeline(fs, chunk_s, rounds, width, fps):
             continue
         iq = iq_from_int8(buf)
         for fr in select_frames(chunk_to_frames(iq, fs, "PAL", width, height, 5e6,
-                                                budget=int(round(chunk_s * fps))),
+                                                budget=frame_budget),
                                 chunk_s, fps):
             q.put(fr.tobytes())
     q.close()

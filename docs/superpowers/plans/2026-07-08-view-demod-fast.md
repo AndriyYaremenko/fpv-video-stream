@@ -552,6 +552,7 @@ git commit -m "feat(view): 2-deep FIFO chunk mailbox absorbs transient CPU spike
 # copy the NEW bench to /tmp (sudo -S steals stdin from `python -`): cat bench > /tmp/bench_stream.py
 # demod-only at 6 MS/s (expect <= ~0.9x realtime under the live bladeRF+x264 load):
 /opt/fpv-video-stream/agent/scan/.venv/bin/python /tmp/bench_stream.py --fs 6e6 --rounds 6 --width 360
+# NOTE: this demod-only figure is UNBUDGETED (builds all fields) — it overstates cost vs production; the --pipeline gate is authoritative.
 ```
 
 - [ ] **Step 2: Pipeline gate ×2 (production-like: stop `fpv-scan-hackrf` during the bench)**

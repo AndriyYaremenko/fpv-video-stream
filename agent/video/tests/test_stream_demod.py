@@ -316,9 +316,10 @@ def test_writer_loop_logs_stats_line(caplog):
 
     with caplog.at_level(logging.INFO):
         writer_loop(q, _Pacer(), _FakeProc(), threading.Event(), {"msg": None},
-                    dropped_chunks=lambda: 7, clock=clock)
+                    dropped_chunks=lambda: 7, mailbox_len=lambda: 2, clock=clock)
     lines = [r.getMessage() for r in caplog.records if "dropped_chunks" in r.getMessage()]
     assert lines and "dropped_chunks=7" in lines[0] and "queue=" in lines[0]
+    assert "mailbox=2" in lines[0]
 
 
 def test_run_stream_writes_every_selected_frame_of_a_chunk():
@@ -377,6 +378,24 @@ def test_run_stream_surfaces_writer_failure_during_drain(monkeypatch):
     err = run_stream(_vcfg(), 947.0, threading.Event(), max_s=30.0, popen=popen,
                      clock=lambda: next(ticks) * 0.3, sleep=lambda s: _time.sleep(0.001))
     assert err == "ffmpeg pipe closed"
+
+
+def test_run_stream_low_fps_still_streams_frames():
+    # VIEW_FPS=1 rounds the naive per-chunk budget to 0 — the guard must keep >=1.
+    fs = 4e6
+    procs = []
+
+    def popen(cmd, **kw):
+        p = _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs))) if cmd[0] == "hackrf_transfer" else _FakeProc()
+        procs.append(p)
+        return p
+
+    cfg = _vcfg()
+    cfg.view_fps = 1.0
+    t = [0.0]
+    run_stream(cfg, 947.0, threading.Event(), max_s=60.0, popen=popen,
+               clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert len(procs[1].stdin.getvalue()) == 320 * 288       # exactly the 1-frame budget
 
 
 def test_run_stream_kills_capture_before_draining_the_writer():
