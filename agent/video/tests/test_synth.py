@@ -38,3 +38,21 @@ def test_to_int8_roundtrips_via_file(tmp_path):
     assert back.shape == iq.shape
     # int8 quantization keeps the unit-circle samples close.
     assert np.mean(np.abs(back - iq)) < 0.02
+
+
+def test_make_cvbs_line_hz_override_changes_sync_period():
+    fs = 6e6
+    img = np.tile(np.linspace(0, 1, 32), (32, 1))
+    nominal = make_cvbs("PAL", img, fs, frames=1)                     # 15625 Hz
+    off = make_cvbs("PAL", img, fs, frames=1, line_hz=15705.0)        # faster lines
+    # sync pulses (samples at the sync level) recur every fs/line_hz samples;
+    # a higher line rate packs more sync pulses into the same signal length.
+    # With higher line_hz, samples-per-line decreases, so the signal is shorter.
+    def n_sync_edges(sig):
+        at_sync = sig < 0.15
+        return int(np.sum(at_sync[1:] & ~at_sync[:-1]))
+    # Both have ~625 lines; verify the override changes signal length
+    assert len(off) < len(nominal), "Higher line_hz should produce shorter signal"
+    # Verify sync edges are still detected (one per line, minus the first)
+    assert n_sync_edges(nominal) >= 624
+    assert n_sync_edges(off) >= 624

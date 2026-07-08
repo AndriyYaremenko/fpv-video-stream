@@ -10,7 +10,7 @@ _ACTIVE_START = 0.18     # picture starts after sync + back porch
 _ACTIVE_END = 0.98
 
 
-def make_cvbs(standard, image, fs, frames=1, interlaced=False, vbi_lines=0):
+def make_cvbs(standard, image, fs, frames=1, interlaced=False, vbi_lines=0, line_hz=None):
     """Build a real luma CVBS baseband (sync train + image) for `frames` frames.
 
     Vectorized: a phase accumulator over the whole signal places the sync pulse at
@@ -23,7 +23,7 @@ def make_cvbs(standard, image, fs, frames=1, interlaced=False, vbi_lines=0):
     """
     image = np.asarray(image, dtype=np.float64)
     img_h, img_w = image.shape
-    line_hz = LINE_HZ[standard]
+    line_hz = LINE_HZ[standard] if line_hz is None else float(line_hz)
     lines = LINES[standard]
     spl = fs / line_hz                       # samples per line (fractional)
     total = int(round(spl * lines * frames))
