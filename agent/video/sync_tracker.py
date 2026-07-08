@@ -3,9 +3,14 @@
 Seeds the ACTUAL line frequency once from an rfft peak (a real FPV camera's
 crystal is off nominal by tens-hundreds of Hz within +/-2% of nominal; slicing
 at the nominal rate shears the picture) and carries the vertical-blanking row
-across chunks so the picture does not jump. Larger deviations fail safe to
-nominal + unlocked (never a wrong lock). View-path only; the scan snapshot path
-never builds one."""
+across chunks so the picture does not jump. View-path only; the scan snapshot
+path never builds one.
+
+Locks only within +/-2% of nominal (every real FPV crystal, with margin) and
+only when a prominent peak has a prominent 2nd harmonic at exactly 2x the
+candidate. Offsets beyond a real crystal's range are not a valid PAL/NTSC
+line; the gates reject the common cases but a wrong lock on such non-physical
+input is out of contract."""
 import numpy as np
 
 from standard import LINE_HZ
@@ -37,10 +42,14 @@ class SyncTracker:
         self.vsync_row = None
 
     def seed(self, baseband, fs):
-        """One-time actual-line-rate estimate. Locks only when a prominent peak
-        near nominal ALSO has a prominent 2nd harmonic (a real line-rate
-        fundamental does; in-window CVBS artifacts do not). Any failure leaves
-        line_hz at nominal + locked=False (safe fall-back, never a wrong lock)."""
+        """One-time actual-line-rate estimate. Locks only within +/-2% of nominal
+        (every real FPV crystal, with margin) and only when a prominent peak
+        near nominal ALSO has a prominent 2nd harmonic at exactly 2x the
+        candidate (a real line-rate fundamental does; in-window CVBS artifacts
+        do not). Any failure leaves line_hz at nominal + locked=False. Offsets
+        beyond a real crystal's range are not a valid PAL/NTSC line and are out
+        of contract: the gates reject the common cases but a wrong lock on such
+        non-physical input is not guaranteed against."""
         bb = np.asarray(baseband, dtype=np.float64)
         n = len(bb)
         self.locked = False
@@ -65,7 +74,7 @@ class SyncTracker:
             return
         # confirm a real line rate: the 2nd harmonic must also stand out
         k2 = int(round(2.0 * f / bin_hz))
-        harm, _ = _peak_prominence(spec, k2, max(2, half // 2), 5 * half)
+        harm, _ = _peak_prominence(spec, k2, 3, 5 * half)   # tight: a companion at exactly 2*candidate
         if harm < _MIN_HARM_PROMINENCE:
             return                            # in-window artifact, not the line fundamental
         self.line_hz = float(f)

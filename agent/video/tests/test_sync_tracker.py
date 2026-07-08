@@ -60,9 +60,15 @@ def test_seed_locks_correct_or_stays_nominal_never_wrong(line_hz):
         assert t.line_hz == LINE_HZ["PAL"]           # unlocked => safe nominal, never wrong
 
 
-def test_seed_far_off_rate_fails_safe_not_wrong_lock():
-    # +3% is outside the +/-2% window: must NOT lock onto an in-window artifact.
+@pytest.mark.parametrize("pct", [2.5, -2.5])   # just past the +/-2% crystal bound
+def test_seed_just_outside_crystal_band_does_not_lock(pct):
+    # No real FPV crystal drifts this far (+/-2% already covers every real
+    # crystal with margin). Just past that bound, the tracker must still
+    # prefer to not lock rather than false-lock on in-window spectral leakage
+    # from the (physically implausible) far-off true rate.
     fs = 6e6
+    hz = LINE_HZ["PAL"] * (1 + pct / 100)
     t = SyncTracker("PAL")
-    t.seed(_baseband(15625.0 * 1.03, fs), fs)
-    assert not (t.locked and abs(t.line_hz - 15625.0) > 20.0)   # no confident-but-wrong lock
+    t.seed(_baseband(hz, fs), fs)
+    # just outside the +/-2% window: must not claim a lock (fall back to nominal)
+    assert not t.locked and t.line_hz == LINE_HZ["PAL"]
