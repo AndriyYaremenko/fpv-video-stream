@@ -137,3 +137,46 @@ def test_build_frame_pipeline_stays_float32():
     bb = np.random.default_rng(5).normal(size=int(fs * 0.05)).astype(np.float32)
     frames = reconstruct_frames(bb, fs, "PAL", width=360)
     assert frames and frames[0].dtype == np.float32
+
+
+def test_reconstruct_budget_zero_returns_nothing():
+    fs = 4e6
+    img = np.tile(np.linspace(0, 1, 32), (32, 1))
+    bb = make_cvbs("PAL", img, fs, frames=2)
+    assert reconstruct_frames(bb, fs, "PAL", width=320, budget=0) == []
+
+
+def test_build_frame_float64_path_bit_identical_to_reference():
+    rng = np.random.default_rng(9)
+    rows = rng.normal(size=(64, 384))                # float64
+    got = build_frame(rows, width=720)
+    start = int(rows.shape[1] * 0.18)                # pre-optimization reference
+    active = rows[:, start:]
+    src_w = active.shape[1]
+    ratio = (src_w - 1) / (720 - 1)
+    pos = np.arange(720) * ratio
+    lo = np.floor(pos).astype(int)
+    hi = np.minimum(lo + 1, src_w - 1)
+    frac = pos - lo
+    ref = active[:, lo] * (1.0 - frac) + active[:, hi] * frac
+    assert got.dtype == np.float64
+    assert np.array_equal(got, ref)                  # bit-for-bit
+
+
+def test_build_frame_float32_arithmetic_no_float64_roundtrip():
+    rows = np.random.default_rng(10).normal(size=(64, 384)).astype(np.float32)
+    got = build_frame(rows, width=360)
+    assert got.dtype == np.float32
+    ref = build_frame(rows.astype(np.float64), width=360)
+    # atol=2e-4 (not 1e-4): genuine float32 arithmetic carries ulp-level error in
+    # `pos`/`frac` (~2e-5 at position magnitude ~310) that this synthetic
+    # uncorrelated-noise fixture amplifies via large adjacent-sample deltas
+    # (~5-6) -- root-caused via manual index/frac inspection: `lo` picks the
+    # identical index on both paths, only the fractional weight differs. Real
+    # (spatially smooth) video would not amplify this the same way.
+    assert np.allclose(got, ref, atol=2e-4)          # float32 result matches float64 math
+
+
+def test_build_frame_empty_rows_keeps_dtype():
+    assert build_frame(np.zeros((0, 384)), width=320).dtype == np.float64
+    assert build_frame(np.zeros((0, 384), dtype=np.float32), width=320).dtype == np.float32

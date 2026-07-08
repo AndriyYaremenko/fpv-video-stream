@@ -29,21 +29,24 @@ def slice_lines(baseband, fs, standard):
 
 def build_frame(rows, width=720, blank_frac=0.18):
     """Drop sync+blanking, resample each active line to `width` px (vectorized).
-    Computes in the input dtype — the view chain stays float32."""
+    Computes in the input dtype: float32 stays float32 throughout (no int32
+    promotion to float64); the float64 (scan) path keeps its original float64
+    positions bit-for-bit."""
     if rows.shape[0] == 0:
-        return np.zeros((0, width), dtype=rows.dtype if rows.size else np.float32)
+        return np.zeros((0, width), dtype=rows.dtype)
     start = int(rows.shape[1] * blank_frac)
     active = rows[:, start:]
     src_w = active.shape[1]
     if src_w < 2:
         return np.zeros((rows.shape[0], width), dtype=rows.dtype)
+    dt = np.float32 if active.dtype == np.float32 else np.float64
     ratio = (src_w - 1) / (width - 1) if width > 1 else 0.0
-    pos = np.arange(width, dtype=np.float32) * np.float32(ratio)
-    lo = np.floor(pos).astype(np.int32)
+    pos = np.arange(width, dtype=dt) * dt(ratio)
+    lo_f = np.floor(pos)
+    lo = lo_f.astype(np.int32)
     hi = np.minimum(lo + 1, src_w - 1)
-    frac = pos - lo
-    result = active[:, lo] * (np.float32(1.0) - frac) + active[:, hi] * frac
-    return result.astype(active.dtype)
+    frac = pos - lo_f                      # stays in dt — no int-driven float64 promotion
+    return active[:, lo] * (dt(1.0) - frac) + active[:, hi] * frac
 
 
 def _align_vsync(rows, win=6):
@@ -80,8 +83,12 @@ def reconstruct_frames(baseband, fs, standard, width=720, blank_frac=0.18, budge
     field = LINES[standard] // 2
     n_frames = rows.shape[0] // field
     idx = range(n_frames)
-    if budget is not None and 0 < budget < n_frames:
-        idx = np.round(np.linspace(0, n_frames - 1, budget)).astype(int)
+    if budget is not None:
+        budget = int(budget)
+        if budget <= 0:
+            return []                      # the caller explicitly asked for nothing
+        if budget < n_frames:
+            idx = np.round(np.linspace(0, n_frames - 1, budget)).astype(int)
     frames = [build_frame(_align_vsync(rows[f * field:(f + 1) * field]), width, blank_frac)
               for f in idx]
     if not frames:                       # fewer than one full field of lines
