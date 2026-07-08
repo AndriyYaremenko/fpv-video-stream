@@ -12,6 +12,7 @@ from demod import fm_demod, lowpass
 from standard import detect_standard
 from frame import reconstruct_frames
 from render import normalize_luma
+from sync_tracker import SyncTracker
 
 LOG = logging.getLogger("video.stream")
 
@@ -53,12 +54,13 @@ def resize_rows(img, height):
 
 
 def chunk_to_frames(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18,
-                    budget=None):
+                    budget=None, tracker=None):
     """One IQ chunk -> list of fixed-size uint8 gray frames (height x width).
-    budget caps how many fields are even built (the streamer's fps budget)."""
+    budget caps how many fields are built; tracker locks line rate + vsync."""
     bb = lowpass(fm_demod(iq), fs, lpf_cutoff_hz)
     out = []
-    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac, budget=budget):
+    for fr in reconstruct_frames(bb, fs, standard, width, blank_frac, budget=budget,
+                                 tracker=tracker):
         if fr.size == 0:
             continue
         out.append(resize_rows(normalize_luma(fr), height))
@@ -185,7 +187,7 @@ class FramePacer:
 
 
 def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, mailbox_len=None,
-                clock=None, log_every_s=10.0):
+                sync_status=None, clock=None, log_every_s=10.0):
     """Writer-thread body: pace frames from the queue into ffmpeg stdin.
 
     Runs until stop_event (immediate, no drain — a retune/stop must not flush
@@ -215,9 +217,17 @@ def writer_loop(q, pacer, enc, stop_event, err, dropped_chunks=None, mailbox_len
         now = clock()
         if now - last_log >= log_every_s:
             fps = (written - last_written) / (now - last_log)
-            LOG.info("view stream: %.1f fps, queue=%d, mailbox=%d, dropped_frames=%d, dropped_chunks=%d",
+            st = sync_status() if sync_status is not None else None
+            if st:
+                vrow = st["vsync_row"] if st["vsync_row"] is not None else "-"
+                sync = (" sync=H%.2f V%s line=%.0fHz"
+                        % (st["line_hz"] / st["nominal"] - 1.0, vrow, st["line_hz"]))
+            else:
+                sync = ""
+            LOG.info("view stream: %.1f fps, queue=%d, mailbox=%d, dropped_frames=%d, "
+                     "dropped_chunks=%d%s",
                      fps, len(q), mailbox_len() if mailbox_len is not None else 0,
-                     q.dropped, dropped_chunks() if dropped_chunks is not None else 0)
+                     q.dropped, dropped_chunks() if dropped_chunks is not None else 0, sync)
             last_log = now
             last_written = written
 
@@ -243,6 +253,7 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
     err = {"msg": None}
     standard = None
     height = None
+    tracker = None
     error = None
     mailbox = ChunkMailbox()
 
@@ -277,6 +288,8 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                 standard = pick_standard(bb, fs, vcfg.view_standard,
                                          vcfg.line_snr_db, vcfg.harm_snr_db)
                 height = VIEW_HEIGHT[standard]
+                tracker = SyncTracker(standard)
+                tracker.seed(bb, fs)         # bb is the demodulated first chunk used for detection
                 enc = popen(build_encode_cmd(vcfg.view_push_url, vcfg.view_width,
                                              height, vcfg.view_fps),
                             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -285,7 +298,9 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
                 writer = threading.Thread(
                     target=writer_loop, args=(q, pacer, enc, stop_event, err),
                     kwargs={"dropped_chunks": lambda: mailbox.dropped,
-                            "mailbox_len": lambda: len(mailbox), "clock": clock},
+                            "mailbox_len": lambda: len(mailbox),
+                            "sync_status": lambda: tracker.status(),
+                            "clock": clock},
                     daemon=True)
                 writer.start()
                 LOG.info("view stream: %s %dx%d @%.0ffps", standard, vcfg.view_width,
@@ -293,7 +308,7 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
             for fr in select_frames(
                     chunk_to_frames(iq, fs, standard, vcfg.view_width, height,
                                     vcfg.lpf_cutoff_hz, vcfg.blank_frac,
-                                    budget=frame_budget),
+                                    budget=frame_budget, tracker=tracker),
                     CHUNK_S, vcfg.view_fps):
                 q.put(fr.tobytes())
         if error is None and err["msg"]:

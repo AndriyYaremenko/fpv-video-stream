@@ -422,3 +422,37 @@ def test_run_stream_kills_capture_before_draining_the_writer():
     run_stream(_vcfg(), 947.0, threading.Event(), max_s=60.0, popen=popen,
                clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
     assert kills == ["hackrf_transfer", "ffmpeg"]
+
+
+def test_chunk_to_frames_forwards_tracker():
+    from sync_tracker import SyncTracker
+    fs = 6e6
+    bars = np.zeros((64, 64)); bars[:, ::8] = 1.0
+    bb = make_cvbs("PAL", bars, fs, frames=4, interlaced=True, vbi_lines=6, line_hz=15705.0)
+    iq = fm_modulate(bb, fs, 4e6)
+    t = SyncTracker("PAL")
+    from demod import fm_demod as _fd, lowpass as _lp
+    t.seed(_lp(_fd(iq), fs, 5e6), fs)
+    frames = chunk_to_frames(iq, fs, "PAL", width=240, height=VIEW_HEIGHT["PAL"],
+                             lpf_cutoff_hz=5e6, tracker=t)
+    assert frames and frames[0].shape == (288, 240)          # tracker path still yields fixed-size frames
+
+
+def test_writer_loop_stats_includes_sync(caplog):
+    import logging
+    q = FrameQueue(maxlen=8)
+    for b in (b"1", b"2", b"3"):
+        q.put(b)
+    q.close()
+    t = [0.0]
+    def clock():
+        t[0] += 6.0
+        return t[0]
+    with caplog.at_level(logging.INFO):
+        writer_loop(q, _Pacer(), _FakeProc(), threading.Event(), {"msg": None},
+                    dropped_chunks=lambda: 0, mailbox_len=lambda: 1,
+                    sync_status=lambda: {"line_hz": 15705.0, "locked": True, "vsync_row": 37,
+                                         "nominal": 15625.0},
+                    clock=clock)
+    line = [r.getMessage() for r in caplog.records if "view stream:" in r.getMessage()][0]
+    assert "line=15705" in line and "V37" in line
