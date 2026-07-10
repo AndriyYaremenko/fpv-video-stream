@@ -1,0 +1,29 @@
+// dashboard/public/fixtures.js — DEV ONLY sample data for ?preview=1. Harmless in prod (never imported unless preview).
+const psd = (n, base) => Array.from({length:n}, (_,i) => base + 8*Math.sin(i/4) - (i%7===0?18:0) + (i%13)*0.7);
+export const FIXTURES = {
+  config: { webrtcBase:'', readUser:'read', readPass:'x' },
+  operator: 'operator_042',
+  devices: [
+    { id:'cam-north', name:'Вхідні ворота', location:'Периметр — Північ', kind:'camera', online:true, bitrateKbps:2100, uptimeSec:5400, readers:2, telemetry:{rssi:-62,freq:'5800',alarm:false} },
+    { id:'cam-yard', name:'Двір', location:'Периметр — Схід', kind:'camera', online:false },
+    { id:'bladerf', name:'Сканер bladeRF', location:'Дах', kind:'scanner', online:true, uptimeSec:9000 },
+  ],
+  detections: [
+    { ts:1751900000, scanner_id:'bladerf', band:'5.8G', center_mhz:5800, channel:'F4', class:'analog', snr_db:18, event:'appeared' },
+    { ts:1751899000, scanner_id:'bladerf', band:'1.2G', center_mhz:1280, class:'digital', snr_db:12, event:'gone' },
+    { ts:1751898000, scanner_id:'bladerf', band:'900M', center_mhz:915, class:'digital', snr_db:9, event:'appeared' },
+  ],
+  scanStore: {
+    bladerf: {
+      online:true, status_ts:1751900000,
+      bands:{ '5.8G':{low_mhz:5645,high_mhz:5945}, '1.2G':{low_mhz:1080,high_mhz:1360}, '900M':{low_mhz:840,high_mhz:960} },
+      latestPsd:{ '5.8G':psd(64,-70), '1.2G':psd(64,-80), '900M':psd(64,-75) },
+      waterfalls:{ '5.8G':[], '1.2G':[], '900M':[] },
+      detection:{ ts:1751900000, occupancy:{'5.8G':0.32,'1.2G':0.08,'900M':0.5},
+        detections:[ {band:'5.8G',center_mhz:5800,class:'analog',power_dbm:-42,bandwidth_mhz:18,confidence:0.9,channel:'F4',snr_db:18},
+          {band:'900M',center_mhz:915,class:'digital',power_dbm:-55,bandwidth_mhz:10,confidence:0.7} ] },
+      video:{ frame_png_b64:'', standard:'PAL', center_mhz:5800, sync_snr_db:18.3, ts:1751900000 },
+      rxtune:{ freq_mhz:5865, channel:'A1', mode:'scan' },
+    },
+  },
+};
