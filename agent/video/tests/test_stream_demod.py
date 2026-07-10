@@ -30,6 +30,23 @@ def test_encode_cmd_short_gop():
     assert cmd[cmd.index("-g") + 1] == "13"
 
 
+def test_encode_cmd_no_osd_by_default():
+    cmd = build_encode_cmd("rtsp://u:p@h:8554/s", 360, 288, 15)
+    assert "-vf" not in cmd and not any("drawtext" in a for a in cmd)
+
+
+def test_encode_cmd_with_osd_drawtext():
+    cmd = build_encode_cmd("rtsp://u:p@h:8554/s", 360, 288, 15,
+                           osd_file="/run/fpv/view-osd.txt", osd_font="/f/Font.ttf")
+    vf = cmd[cmd.index("-vf") + 1]
+    assert vf.startswith("drawtext=")
+    assert "textfile=/run/fpv/view-osd.txt" in vf and "reload=1" in vf
+    assert "fontfile=/f/Font.ttf" in vf
+    assert "x=w-tw-10:y=10" in vf and "fontsize=18" in vf
+    # filter sits between the input and the codec
+    assert cmd.index("-vf") > cmd.index("-i") and cmd.index("-vf") < cmd.index("-c:v")
+
+
 def test_pick_standard_forced_and_noise_fallback():
     noise = np.random.default_rng(1).normal(0, 1, 200_000)
     assert pick_standard(noise, 8e6, forced="ntsc") == "NTSC"
