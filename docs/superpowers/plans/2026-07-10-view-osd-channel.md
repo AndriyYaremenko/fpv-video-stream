@@ -616,3 +616,11 @@ Deploy: `ssh andriy@192.168.1.204`, `sudo git -C /opt/fpv-video-stream pull`, `s
 - Spec coverage: rendering via drawtext+reload (T2), `osd_text` format incl. idle `—` (T1), config file/font + disable (T3), ViewEncoder file ownership + spawn-time ensure + idle write (T4), session-loop text on entry+detect with `channel_of` threading (T5), main.py wiring with `nearest_channel` (T6). Legacy untouched (T2 default `osd_file=None`). Deploy + risks in the spec map to T6 Step 5.
 - Type consistency: `osd_text(freq_mhz, standard=None, channel=None)`, `set_osd(text)`, `_osd_for(freq_mhz, standard, channel_of)`, `channel_of(freq_mhz) -> str|None`, `build_encode_cmd(..., osd_file=None, osd_font=DEFAULT_OSD_FONT)` — consistent across T1–T6. `IDLE_TEXT`/`DEFAULT_OSD_FONT` sourced once in `osd.py`, imported by stream_demod/vconfig/view_encoder (no cycle — `osd.py` imports nothing).
 - No placeholders: every code step shows complete code; every run step names the command and expected result.
+
+## Post-review hardening (applied)
+
+The final review of this plan's shipped code found three gaps versus the design above; all three are now fixed in `agent/video/view_encoder.py` (one commit, `fix(view): OSD keeps live label across respawn + degrades gracefully on missing font`):
+
+1. `_write_osd` uses a per-thread `.tmp` filename (`f"{self._osd_file}.{threading.get_ident()}.tmp"`) instead of a shared `<file>.tmp` (Task 4 fix) — concurrent writers (e.g. a respawn racing a session's `set_osd`) never clobber each other's temp file.
+2. `ViewEncoder` keeps the current label in `self._osd_text` (set by `set_osd`, defaulting to `IDLE_TEXT`) and writes *that* — not the hardcoded `IDLE_TEXT` — before a respawn, so a mid-session ffmpeg crash/respawn preserves the live freq/channel/standard label instead of reverting to `"—"`.
+3. `_supervise` checks `os.path.isfile(self._osd_font)` once at the top of the loop; if the configured font file is missing, it logs `LOG.warning(...)` and drops the OSD (`osd_file = ""`, no `-vf` in the spawned argv) for that run instead of letting a broken drawtext filter crash ffmpeg on every respawn attempt.

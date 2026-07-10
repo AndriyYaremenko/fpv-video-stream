@@ -22,6 +22,7 @@ class ViewEncoder:
         self._vcfg = vcfg
         self._osd_file = vcfg.view_osd_file
         self._osd_font = vcfg.view_osd_font
+        self._osd_text = IDLE_TEXT       # current label; survives a mid-session ffmpeg respawn
         self._popen = popen or subprocess.Popen
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
@@ -43,7 +44,7 @@ class ViewEncoder:
         self._last = None
         self._stats = None
         self._q.clear()
-        self._write_osd(IDLE_TEXT)
+        self.set_osd(IDLE_TEXT)
 
     def set_session_stats(self, fn):
         """fn() -> {'mailbox': int, 'dropped_chunks': int, 'sync': dict|None}."""
@@ -51,6 +52,7 @@ class ViewEncoder:
 
     def set_osd(self, text):
         """Atomically publish the OSD label the drawtext filter reloads."""
+        self._osd_text = text
         self._write_osd(text)
 
     def _write_osd(self, text):
@@ -77,15 +79,21 @@ class ViewEncoder:
             self._thread.join(timeout=5.0)
 
     def _supervise(self):
+        osd_file = self._osd_file
+        if osd_file and not os.path.isfile(self._osd_font):
+            LOG.warning("view OSD font %r not found; streaming without the overlay",
+                        self._osd_font)
+            osd_file = ""                         # a missing font must not loop the stream
         backoff = 1.0
         while not self._stop.is_set():
-            self._write_osd(IDLE_TEXT)           # textfile must exist before drawtext opens it
+            if osd_file:
+                self._write_osd(self._osd_text)   # keep the live label across a respawn
             enc = None
             try:
                 enc = self._popen(
                     build_encode_cmd(self._vcfg.view_push_url, self._vcfg.view_width,
                                      VIEW_CANVAS_HEIGHT, self._vcfg.view_fps,
-                                     osd_file=self._osd_file, osd_font=self._osd_font),
+                                     osd_file=osd_file, osd_font=self._osd_font),
                     stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
             except Exception:
                 LOG.exception("view encoder spawn failed")

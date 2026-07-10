@@ -127,6 +127,10 @@ DejaVu font path exists; if not, set `VIEW_OSD_FONT` or disable with `VIEW_OSD_F
 ## Risks
 - **Missing font → ffmpeg respawn loop.** The default DejaVu-Bold is already used by the live RX5808
   grabber on this Pi, so it is present; the path is configurable and `VIEW_OSD_FILE=""` fully
-  disables the feature as an escape hatch.
+  disables the feature as an escape hatch. Beyond that, the encoder now degrades gracefully: if the
+  configured font file is absent, `_supervise` logs a one-time `LOG.warning` and skips the overlay
+  (no `-vf`) for that run, so a missing font can never loop the stream. Separately, the pre-spawn
+  textfile write uses the current session label (`self._osd_text`), not the idle placeholder, so a
+  mid-session ffmpeg respawn preserves the live label instead of reverting to `"—"`.
 - **`/run/fpv/` not writable at boot.** Same directory the RX5808 OSD already uses successfully; the
   atomic writer `makedirs(exist_ok=True)` first, matching `Rx5808Controller._write_osd`.
