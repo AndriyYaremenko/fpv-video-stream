@@ -22,6 +22,7 @@ class VideoConfig:
     view_width: int = 480
     view_fps: float = 15.0
     view_standard: str = "auto"          # auto | pal | ntsc
+    view_engine: str = "persistent"      # persistent (agent-lifetime ffmpeg) | legacy (per-session)
 
 
 def load_video_config(env=None):
@@ -61,4 +62,6 @@ def load_video_config(env=None):
         c.view_fps = float(env["VIEW_FPS"])
     if "VIEW_STANDARD" in env:
         c.view_standard = env["VIEW_STANDARD"].strip().lower()
+    if "VIEW_ENGINE" in env:
+        c.view_engine = env["VIEW_ENGINE"].strip().lower()
     return c

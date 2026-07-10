@@ -264,19 +264,31 @@ def main() -> None:
             if viewcfg.view_enabled and viewcfg.view_push_url:
                 import stream_demod
                 from view_controller import ViewController, stream_name_from_push_url
+                encoder = None
+                if viewcfg.view_engine == "persistent":
+                    from view_encoder import ViewEncoder
+                    encoder = ViewEncoder(viewcfg)
+                    encoder.start()          # RTSP path (black placeholder) is up from boot
+                    run = lambda freq, stop, max_s: stream_demod.run_stream_persistent(
+                        viewcfg, freq, stop, max_s, encoder,
+                        lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
+                else:
+                    run = lambda freq, stop, max_s: stream_demod.run_stream(
+                        viewcfg, freq, stop, max_s,
+                        lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
                 view = ViewController(
                     publisher,
-                    run_stream=lambda freq, stop, max_s: stream_demod.run_stream(
-                        viewcfg, freq, stop, max_s,
-                        lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable),
+                    run_stream=run,
                     max_s=viewcfg.view_max_s,
                     reset=reset_hackrf,
                     stream=stream_name_from_push_url(viewcfg.view_push_url),
+                    on_idle=encoder.idle if encoder is not None else None,
                 )
                 publisher.on_view_command = view.set_command
                 publisher.on_connected = view.announce   # retained announce on every (re)connect
-                LOG.info("SDR view mode enabled (push=%s max=%.0fs)",
-                         viewcfg.view_push_url.split("@")[-1], viewcfg.view_max_s)
+                LOG.info("SDR view mode enabled (engine=%s push=%s max=%.0fs)",
+                         viewcfg.view_engine, viewcfg.view_push_url.split("@")[-1],
+                         viewcfg.view_max_s)
     except Exception:
         LOG.exception("view mode init failed; continuing without it")
     if controller is not None and publisher is not None:

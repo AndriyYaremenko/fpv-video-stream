@@ -263,6 +263,13 @@ def test_frame_queue_close_drains_then_none():
     assert q.get(timeout=0.01) is None            # drained -> end of stream
 
 
+def test_frame_queue_clear_drops_pending():
+    q = FrameQueue(maxlen=4)
+    q.put(b"a"); q.put(b"b")
+    q.clear()
+    assert len(q) == 0 and q.get(timeout=0.01) is None
+
+
 from stream_demod import writer_loop
 
 
@@ -465,3 +472,94 @@ def test_writer_loop_stats_includes_sync(caplog):
                     clock=clock)
     line = [r.getMessage() for r in caplog.records if "view stream:" in r.getMessage()][0]
     assert "line=15705" in line and "V37" in line
+
+
+from stream_demod import run_stream_persistent, VIEW_CANVAS_HEIGHT
+
+
+class _FakeEncoder:
+    def __init__(self):
+        self.frames = []
+        self.stats_fn = None
+    def submit(self, fr):
+        self.frames.append(fr)
+    def set_session_stats(self, fn):
+        self.stats_fn = fn
+
+
+def test_run_stream_persistent_submits_canvas_frames_and_spawns_no_ffmpeg():
+    fs = 4e6
+    cmds = []
+
+    def popen(cmd, **kw):
+        cmds.append(cmd[0])
+        return _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs) * 2))
+
+    fenc = _FakeEncoder()
+    t = [0.0]
+    err = run_stream_persistent(_vcfg(), 947.0, threading.Event(), max_s=60.0,
+                                encoder=fenc, popen=popen, clock=lambda: t[0],
+                                sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert err == "hackrf_transfer exited"           # finite stdout EOF, same as legacy
+    assert cmds == ["hackrf_transfer"]               # NO ffmpeg spawn: encoder is shared
+    assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)
+    st = fenc.stats_fn()                             # session stats got wired
+    assert set(st) == {"mailbox", "dropped_chunks", "sync"}
+
+
+def test_run_stream_persistent_stops_cleanly_on_stop_event():
+    stop = threading.Event()
+    stop.set()
+    err = run_stream_persistent(_vcfg(), 947.0, stop, max_s=60.0, encoder=_FakeEncoder(),
+                                popen=lambda cmd, **kw: _FakeProc(stdout=io.BytesIO(b"")),
+                                clock=lambda: 0.0, sleep=lambda s: None)
+    assert err is None
+
+
+def test_run_stream_persistent_ntsc_still_renders_288_canvas():
+    fs = 4e6
+    img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("NTSC", img, fs, frames=max(1, int(round(CHUNK_S * 30))))
+    raw = to_int8(fm_modulate(bb, fs, 2e6))
+    need = int(fs * 2 * CHUNK_S)
+    chunk = bytes((raw * (need // len(raw) + 1))[:need])
+
+    def popen(cmd, **kw):
+        return _FakeProc(stdout=io.BytesIO(chunk * 2))
+
+    cfg = _vcfg()
+    cfg.view_standard = "ntsc"        # native field height 240 != canvas: locks the 288 invariant
+    fenc = _FakeEncoder()
+    t = [0.0]
+    err = run_stream_persistent(cfg, 947.0, threading.Event(), max_s=60.0,
+                                encoder=fenc, popen=popen, clock=lambda: t[0],
+                                sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert err == "hackrf_transfer exited"
+    assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)
+
+
+def test_run_stream_persistent_times_out():
+    fs = 4e6
+    chunk = _chunk_bytes(fs)
+
+    class _EndlessP:                                 # capture never EOFs during the test...
+        reads = 0
+        def read(self, n):
+            _EndlessP.reads += 1
+            if _EndlessP.reads > 100:                # ...but dies afterwards: leaked daemon
+                return b""                           # readers must not outlive the test
+            _t.sleep(0.001)      # yield the GIL: a hot spin starves the demod thread
+            return chunk
+
+    def popen(cmd, **kw):
+        p = _FakeProc()
+        if cmd[0] == "hackrf_transfer":
+            p.stdout = _EndlessP()
+            p.poll = lambda: None
+        return p
+
+    t = [0.0]
+    err = run_stream_persistent(_vcfg(), 947.0, threading.Event(), max_s=1.0,
+                                encoder=_FakeEncoder(), popen=popen, clock=lambda: t[0],
+                                sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.05)))
+    assert err is None                               # deadline reached = clean exit
