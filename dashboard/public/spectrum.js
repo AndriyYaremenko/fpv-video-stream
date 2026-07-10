@@ -1,5 +1,3 @@
-import { detectionKey } from './alert.js';
-import { RX5808_CHANNELS } from './rx5808-channels.js';
 // dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + DOM render (browser only).
 
 

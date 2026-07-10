@@ -112,8 +112,8 @@ a{color:var(--aux);}
 .node-card .nc-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;}
 .node-card .nc-title{font-weight:600;}
 .node-card .nc-sub{color:var(--muted);font-size:11px;font-family:var(--mono);}
-.node-card .nc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-family:var(--mono);font-size:12px;}
-.node-card .nc-grid .k{color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase;display:block;}
+.nc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-family:var(--mono);font-size:12px;}
+.nc-grid .k{color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase;display:block;}
 .node-card .nc-actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}
 .node-card .nc-actions .btn{padding:5px 9px;font-size:12px;}
 .temp-hot{color:var(--threat);} .temp-warm{color:var(--warn);}
