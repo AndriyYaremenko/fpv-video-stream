@@ -161,12 +161,15 @@ test('activeViewer follows the ACTIVE session even when an idle viewer exists', 
   assert.equal(activeViewer({}), null);
 });
 
-test('playerKey changes on session restart and is empty when inactive', () => {
+test('playerKey is stable across retune/restart, empty without view state', () => {
   const a = playerKey({ active: true, freq_mhz: 5865, until_ts: 1000 }, 'hackrf-view');
-  const b = playerKey({ active: true, freq_mhz: 5865, until_ts: 1600 }, 'hackrf-view');
-  assert.notEqual(a, b);                               // same freq, new session -> new key
-  assert.equal(playerKey({ active: false }, 'hackrf-view'), '');
-  assert.equal(playerKey(null, 'hackrf-view'), '');
+  const b = playerKey({ active: true, freq_mhz: 5905, until_ts: 1600 }, 'hackrf-view');
+  assert.equal(a, 'hackrf-view');
+  assert.equal(a, b);                       // retune must NOT tear the player down
+  // idle agent still pushes the placeholder stream -> keep the player connected
+  assert.equal(playerKey({ active: false, stream: 'hackrf-view' }, 'hackrf-view'), 'hackrf-view');
+  assert.equal(playerKey(null, 'hackrf-view'), '');       // no view capability -> no player
+  assert.equal(playerKey(undefined, 'hackrf-view'), '');
 });
 
 test('viewerListHtml rounds SNR to one decimal', () => {

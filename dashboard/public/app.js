@@ -23,6 +23,7 @@ const viewerState = emptyViewer();
 const viewerPanel = document.getElementById('viewer-panel');
 let viewerPlayer = null;      // {player}|null
 let viewerStreamKey = '';     // `${stream}|${freq}` of the running/starting player
+let viewerRetry = { timer: null, inflight: false };
 
 spectrumPanel.addEventListener('click', (e) => {
   const scanBlock = e.target.closest('[data-scanner-id]');
@@ -345,27 +346,44 @@ function renderViewer() {
   syncViewerPlayer(store, displayId, view);
 }
 
-// Keep the in-panel WHEP player in sync with the view state. On retune the RTSP path is
-// recreated, so (re)connection attempts retry until the stream is back (or the key changes).
+// Keep the in-panel WHEP player in sync. The persistent engine keeps one path
+// alive across start/stop/retune, so the key is the stream name: connect once
+// when the panel appears, re-kick only if the connection actually died.
 function syncViewerPlayer(store, viewerId, view) {
   const video = document.getElementById('viewer-video');
   const want = playerKey(view, viewerId ? viewStream(store, viewerId) : '');
-  if (want === viewerStreamKey) return;
-  if (viewerPlayer && viewerPlayer.player) viewerPlayer.player.close();
-  viewerPlayer = null;
-  viewerStreamKey = want;
-  if (!want) { video.srcObject = null; return; }
-  startViewerWhep(video, viewStream(store, viewerId), want, 0);
+  if (want !== viewerStreamKey) {
+    if (viewerPlayer && viewerPlayer.player) viewerPlayer.player.close();
+    viewerPlayer = null;
+    viewerStreamKey = want;
+    if (viewerRetry.timer) clearTimeout(viewerRetry.timer);
+    viewerRetry = { timer: null, inflight: false };
+    if (!want) { video.srcObject = null; return; }
+    startViewerWhep(video, viewStream(store, viewerId), want, 0);
+    return;
+  }
+  // Same key, but the player died (encoder respawn, server restart) and the
+  // retries gave up — any view-state tick re-kicks the connection.
+  if (want && !viewerPlayer && !viewerRetry.timer && !viewerRetry.inflight) {
+    startViewerWhep(video, viewStream(store, viewerId), want, 0);
+  }
 }
 
 async function startViewerWhep(video, stream, key, attempt) {
-  if (viewerStreamKey !== key || attempt > 40) return;      // superseded or ~60 s of retries
+  if (viewerStreamKey !== key || attempt > 40) { viewerRetry.inflight = false; return; }
+  viewerRetry.inflight = true;
   try {
-    const p = await startWhep(video, `${cfg.webrtcBase}/${stream}/whep`, cfg.readUser, cfg.readPass);
-    if (viewerStreamKey !== key) { p.close(); return; }
+    const p = await startWhep(video, `${cfg.webrtcBase}/${stream}/whep`, cfg.readUser, cfg.readPass,
+      () => { if (viewerPlayer && viewerPlayer.player === p) { p.close(); viewerPlayer = null; } });
+    if (viewerStreamKey !== key) { p.close(); viewerRetry.inflight = false; return; }
     viewerPlayer = { player: p };
+    viewerRetry.inflight = false;
   } catch {
-    setTimeout(() => startViewerWhep(video, stream, key, attempt + 1), whepRetryDelay(attempt));
+    viewerRetry.timer = setTimeout(() => {
+      viewerRetry.timer = null;
+      viewerRetry.inflight = false;
+      startViewerWhep(video, stream, key, attempt + 1);
+    }, whepRetryDelay(attempt));
   }
 }
 

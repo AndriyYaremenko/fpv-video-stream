@@ -1,10 +1,19 @@
 // dashboard/public/whep.js — minimal non-trickle WHEP reader.
-export async function startWhep(video, whepUrl, user, pass) {
+export async function startWhep(video, whepUrl, user, pass, onDead) {
   const pc = new RTCPeerConnection({ iceServers: [] });
   pc.addTransceiver('video', { direction: 'recvonly' });
   pc.addTransceiver('audio', { direction: 'recvonly' });
   const stream = new MediaStream();
   pc.ontrack = (e) => { stream.addTrack(e.track); video.srcObject = stream; };
+  if (onDead) {
+    let fired = false;
+    pc.onconnectionstatechange = () => {
+      if (!fired && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) {
+        fired = true;
+        onDead();
+      }
+    };
+  }
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);

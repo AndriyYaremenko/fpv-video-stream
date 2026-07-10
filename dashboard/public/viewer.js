@@ -105,10 +105,11 @@ export function viewStream(store, id) {
   return (v && v.stream) || `${id}-view`;
 }
 
-// Player identity: changes exactly when the agent (re)starts its pipeline — every
-// start/retune mints a fresh until_ts, while announce() republishes preserve it.
+// Player identity: the persistent engine keeps ONE MediaMTX path alive across
+// start/stop/retune (placeholder while idle), so the player binds to the
+// stream name only. It changes exactly when the panel switches scanners.
 export function playerKey(view, stream) {
-  return view && view.active ? `${stream}|${view.freq_mhz}|${view.until_ts}` : '';
+  return view ? stream : '';
 }
 
 export function ageLabel(nowS, ts) {
