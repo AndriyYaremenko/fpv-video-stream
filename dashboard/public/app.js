@@ -1,357 +1,58 @@
-// dashboard/public/app.js — grid render, WHEP players, device management (add/delete/creds), tile sizing.
+// dashboard/public/app.js — shell bootstrap: builds ctx + data stores, wires router/modals/topbar,
+// owns the camera WHEP players and the FPV Viewer generation-token player.
 import { startWhep } from '/whep.js';
-import { splitByKind, renderSpectrum, classColor, fmtFreq, viewCaption } from '/spectrum.js';
-import { diffNewKeys, SoundAlerter } from '/alert.js';
+import { SoundAlerter, diffNewKeys } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
-import { galleryHtml, buildFramesQuery, toLocalDatetime } from '/frames-gallery.js';
+import { createRouter } from '/router.js';
+import { createModals } from '/modals.js';
 import {
-  emptyViewer, applyDetections, seedFromJournal, viewerRows, viewerListHtml,
+  emptyViewer, applyDetections, seedFromJournal,
   pickViewer, pickRxScanner, viewStream, activeViewer, playerKey, whepRetryDelay,
 } from '/viewer.js';
+import { render as renderDashboard } from '/views/dashboard.js';
+import { render as renderViewer } from '/views/viewer.js';
+import { render as renderNodes } from '/views/nodes.js';
+import { render as renderDetections } from '/views/detections.js';
+import { render as renderFrames } from '/views/frames.js';
 
-let cfg = null;
-const players = new Map(); // id -> { player } | { player: null, starting: true }
-const lastById = new Map(); // id -> latest device snapshot (for restart + edit prefill)
-const grid = document.getElementById('grid');
-const spectrumPanel = document.getElementById('spectrum-panel');
+const PREVIEW = new URLSearchParams(location.search).has('preview');
+
+// ---- data stores (single source of truth; views read these only via ctx accessors) ----
 const alerter = new SoundAlerter();
-let prevScanKeys = null;
 const scanClient = new MqttScanClient();
-let scannersFromRegistry = [];
-const viewerState = emptyViewer();
-const viewerPanel = document.getElementById('viewer-panel');
+const players = new Map();          // camera id -> { player } | { player:null, starting:true }
+const viewerState = emptyViewer();  // viewer.js state: { entries, seenTs } — mutated in place
+let cfg = null;
+let devices = [];
+let newDetKeys = new Set();
+let prevScanKeys = null;
+let fx = null;                      // FIXTURES, preview only
+
+// ==== FPV Viewer generation-token player ====================================
+// Relocated verbatim (behavior-preserving) from the current main branch's
+// dashboard/public/app.js (renderViewer's player wiring + syncViewerPlayer +
+// startViewerWhep, app.js:327-402). Only the trigger changed: instead of
+// living inside a renderViewer() that ALSO drew the panel HTML, the DOM/list
+// rendering now belongs to views/viewer.js (Task 4); this module keeps just
+// the player lifecycle and exposes it as ctx.handlers.syncViewerPlayer(),
+// called by that view right after it mounts #viewer-video.
 let viewerPlayer = null;      // {player}|null
 let viewerStreamKey = '';     // stream name of the running/starting player
 let viewerRetry = { timer: null, inflight: false };
 
-spectrumPanel.addEventListener('click', (e) => {
-  const scanBlock = e.target.closest('[data-scanner-id]');
-  const sid = scanBlock ? scanBlock.dataset.scannerId : null;
-
-  // RX5808 mode buttons
-  const modeBtn = e.target.closest('[data-rxmode]');
-  if (modeBtn && sid) {
-    scanClient.publishCommand(sid, { mode: modeBtn.dataset.rxmode });
-    return;
-  }
-  // Click a spectrum chart -> fill the SDR view frequency field; on 5.8G also
-  // tune the RX5808 to the nearest channel (previous behavior kept).
-  const canvas = e.target.closest('canvas.freqpick');
-  if (canvas && sid) {
-    const rect = canvas.getBoundingClientRect();
-    const lo = Number(canvas.dataset.lowMhz);
-    const hi = Number(canvas.dataset.highMhz);
-    const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
-    const freq = lo + (x / rect.width) * (hi - lo);
-    const inp = scanBlock.querySelector('.view-freq');
-    if (inp) inp.value = String(Math.round(freq));
-    if (canvas.classList.contains('tunable')) {
-      const ch = nearestRxChannel(freq);
-      if (ch) scanClient.publishCommand(sid, { mode: 'manual', channel: ch.name });
-    }
-    return;
-  }
-  // SDR view start/stop buttons
-  const vbtn = e.target.closest('[data-viewact]');
-  if (vbtn && sid) {
-    if (vbtn.dataset.viewact === 'stop') {
-      scanClient.publishView(sid, 'stop');
-    } else {
-      const inp = scanBlock.querySelector('.view-freq');
-      const f = Number(inp && inp.value);
-      if (Number.isFinite(f) && f >= 100 && f <= 6000) scanClient.publishView(sid, 'start', f);
-    }
-    return;
-  }
-  // ▶ on a detection row -> start the SDR view at that frequency
-  const vfreq = e.target.closest('[data-viewfreq]');
-  if (vfreq && sid) {
-    scanClient.publishView(sid, 'start', Number(vfreq.dataset.viewfreq));
-    return;
-  }
-
-  const frame = e.target.closest('.scan-frame');
-  if (frame) {
-    const cap = frame.parentElement.querySelector('.scan-frame-cap');
-    openImageModal(frame.src, cap ? cap.textContent : '');
-    return;
-  }
-  const btn = e.target.closest('button[data-act]');
-  if (!btn) return;
-  const block = btn.closest('[data-scanner-id]');
-  if (!block) return;
-  const id = block.dataset.scannerId;
-  const act = btn.dataset.act;
-  if (act === 'edit') openEditForm(id);
-  else if (act === 'del') deleteScanner(id);
-  else if (act === 'info') scannerInfoModal(lastById.get(id) || { id, name: id, location: '' }, false);
-});
-
-viewerPanel.addEventListener('click', (e) => {
-  if (e.target.closest('#viewer-stop')) {
-    const vid = activeViewer(scanClient.store) || pickViewer(scanClient.store);
-    if (vid) scanClient.publishView(vid, 'stop');
-    return;
-  }
-  const row = e.target.closest('[data-vwfreq]');
-  if (!row) return;
-  const f = Number(row.dataset.vwfreq);
-  const vid = pickViewer(scanClient.store);
-  if (!vid || !Number.isFinite(f) || f < 100 || f > 6000) return;
-  scanClient.publishView(vid, 'start', f);
-  if (row.dataset.vwband === '5.8G') {           // dual action: also tune the RX5808
-    const rxId = pickRxScanner(scanClient.store);
-    const ch = nearestRxChannel(f);
-    if (rxId && ch) scanClient.publishCommand(rxId, { mode: 'manual', channel: ch.name });
-  }
-});
-
-// RX5808 channel <select> -> tune that channel (manual)
-spectrumPanel.addEventListener('change', (e) => {
-  const sel = e.target.closest('select.rx5808-ch');
-  if (!sel) return;
-  const block = sel.closest('[data-scanner-id]');
-  if (block) scanClient.publishCommand(block.dataset.scannerId, { mode: 'manual', channel: sel.value });
-});
-
-// ---- sound-alert toggle ----
-const soundBtn = document.getElementById('sound-toggle');
-function setSoundUI() {
-  soundBtn.textContent = alerter.armed ? '🔔' : '🔕';
-  soundBtn.classList.toggle('armed', alerter.armed);
-  soundBtn.title = alerter.armed ? 'Звук сповіщень: увімкнено' : 'Звук сповіщень: вимкнено';
-}
-function setArmed(on) {
-  if (on) alerter.arm(); else alerter.disarm();
-  localStorage.setItem('soundArmed', on ? '1' : '0');
-  setSoundUI();
-}
-soundBtn.addEventListener('click', () => setArmed(!alerter.armed));
-// Restore preference; autoplay needs a user gesture, so if previously armed, arm on first interaction.
-if (localStorage.getItem('soundArmed') === '1') {
-  const resume = () => { alerter.arm(); setSoundUI(); document.removeEventListener('pointerdown', resume); };
-  document.addEventListener('pointerdown', resume, { once: true });
-  soundBtn.textContent = '🔔';
-  soundBtn.classList.add('armed');
-} else {
-  setSoundUI();
-}
-
-// ---- tile size (persisted) ----
-const sizeInput = document.getElementById('tile-size');
-const savedSize = localStorage.getItem('tileMin') || '320';
-sizeInput.value = savedSize;
-grid.style.setProperty('--tile-min', `${savedSize}px`);
-sizeInput.addEventListener('input', () => {
-  grid.style.setProperty('--tile-min', `${sizeInput.value}px`);
-  localStorage.setItem('tileMin', sizeInput.value);
-});
-
-// ---- top bar actions ----
-document.getElementById('logout').addEventListener('click', async () => {
-  await fetch('/logout', { method: 'POST' });
-  location.href = '/login.html';
-});
-document.getElementById('add-device').addEventListener('click', openAddForm);
-document.getElementById('journal-btn').addEventListener('click', openJournal);
-document.getElementById('frames-btn').addEventListener('click', openFrames);
-document.getElementById('restart-all').addEventListener('click', restartAll);
-
-// ---- reusable form/creds modal ----
-const formModal = document.getElementById('form-modal');
-const formBody = document.getElementById('form-modal-body');
-function showModal(html) { formBody.innerHTML = html; formModal.classList.remove('hidden'); }
-function hideModal() { formModal.classList.add('hidden'); formBody.innerHTML = ''; }
-formModal.addEventListener('click', (e) => {
-  if (e.target === formModal || e.target.hasAttribute('data-close')) hideModal();
-  const copyBtn = e.target.closest('.copy');
-  if (copyBtn) {
-    const pre = copyBtn.closest('.cred-row').querySelector('pre');
-    copyText(pre.textContent, copyBtn);
-  }
-  if (e.target.closest('#journal-refresh')) openJournal();
-  if (e.target.closest('#frames-refresh')) openFrames();
-  const frTile = e.target.closest('.fr-tile');
-  if (frTile) openImageModal(frTile.dataset.src, frTile.dataset.cap);
-  if (e.target.closest('#frames-more')) fetchFrames({ append: true });
-  const tp = e.target.closest('[data-tp]');
-  if (tp) {
-    const hours = { '1h': 1, '24h': 24, '7d': 168 }[tp.dataset.tp];
-    framesFilter.from = hours ? toLocalDatetime(Date.now() - hours * 3600e3) : '';
-    framesFilter.to = '';
-    fetchFrames();
-  }
-});
-
-// Frames-gallery filters: any change updates the state and re-fetches from the server.
-formModal.addEventListener('change', (e) => {
-  const key = {
-    'frames-scanner': 'scanner', 'frames-band': 'band', 'frames-standard': 'standard',
-    'frames-snr': 'snrMin', 'frames-from': 'from', 'frames-to': 'to',
-  }[e.target.id];
-  if (key) { framesFilter[key] = e.target.value; fetchFrames(); }
-});
-
-async function copyText(text, btn) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    // navigator.clipboard needs a secure context; fall back for plain-HTTP-over-WG.
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); } catch { /* ignore */ }
-    document.body.removeChild(ta);
-  }
-  if (btn) { const t = btn.textContent; btn.textContent = 'скопійовано ✓'; setTimeout(() => { btn.textContent = t; }, 1200); }
-}
-
-async function loadConfig() {
-  const res = await fetch('/api/config');
-  if (res.status === 401) { location.href = '/login.html'; return null; }
-  return res.json();
-}
-
-// ---- grid tiles ----
-function tileEl(d) {
-  let el = document.getElementById(`tile-${d.id}`);
-  if (el) return el;
-  el = document.createElement('section');
-  el.id = `tile-${d.id}`;
-  el.className = 'tile';
-  el.innerHTML = `
-    <video id="vid-${d.id}" autoplay playsinline muted></video>
-    <div class="tile-overlay">
-      <div class="tile-top">
-        <span class="badge" id="badge-${d.id}"></span>
-        <div class="tile-actions">
-          <button class="tile-btn act-restart" title="Перезапустити перегляд">🔄</button>
-          <button class="tile-btn act-creds" title="Креди / команда пушу">🔑</button>
-          <button class="tile-btn act-edit" title="Редагувати">✏️</button>
-          <button class="tile-btn act-del" title="Видалити вузол">🗑</button>
-        </div>
-      </div>
-      <div class="tile-bottom">
-        <div class="tile-meta">
-          <strong>${escapeHtml(d.name)}</strong>
-          <small>${escapeHtml(d.location)}</small>
-        </div>
-        <div class="tile-stats" id="stats-${d.id}"></div>
-        <div class="tile-telemetry" id="tel-${d.id}"></div>
-      </div>
-    </div>`;
-  el.addEventListener('click', () => openModal(d));
-  el.querySelector('.act-restart').addEventListener('click', (e) => { e.stopPropagation(); restartTile(d.id); });
-  el.querySelector('.act-creds').addEventListener('click', (e) => { e.stopPropagation(); viewCreds(d.id); });
-  el.querySelector('.act-edit').addEventListener('click', (e) => { e.stopPropagation(); openEditForm(d.id); });
-  el.querySelector('.act-del').addEventListener('click', (e) => { e.stopPropagation(); deleteDevice(d.id, d.name); });
-  grid.appendChild(el);
-  return el;
-}
-
-function render(devices) {
-  const { cameras, scanners } = splitByKind(devices);
-  scannersFromRegistry = scanners;
-  for (const d of devices) lastById.set(d.id, d);
-
-  document.getElementById('summary').textContent =
-    `${cameras.filter((d) => d.online).length}/${cameras.length} онлайн`;
-
-  renderScan();   // draw from the MQTT store (presence/data), using the latest registry metadata
-
-  for (const d of cameras) {
-    const el = tileEl(d);
-    el.querySelector('.tile-meta strong').textContent = d.name;     // reflect edits
-    el.querySelector('.tile-meta small').textContent = d.location;
-    el.classList.toggle('offline', !d.online);
-    const badge = el.querySelector(`#badge-${d.id}`);
-    badge.textContent = d.online ? 'ONLINE' : 'OFFLINE';
-    badge.className = `badge ${d.online ? 'on' : 'off'}`;
-
-    el.querySelector(`#stats-${d.id}`).textContent = d.online
-      ? `${fmtBitrate(d.bitrateKbps)} · ${fmtUptime(d.uptimeSec)} · 👁 ${d.readers}` : '';
-    el.querySelector(`#tel-${d.id}`).textContent = d.telemetry ? telemetryLine(d.telemetry) : '';
-
-    const state = players.get(d.id) || {};
-    if (d.online && !state.player && !state.starting) {
-      startPlayer(d);
-    } else if (!d.online && state.player) {
-      state.player.close();
-      players.set(d.id, { player: null });
-    }
-  }
-
-  // Drop tiles for cameras that no longer exist (e.g. deleted or converted).
-  const ids = new Set(cameras.map((d) => d.id));
-  for (const el of grid.querySelectorAll('.tile')) {
-    const id = el.id.replace('tile-', '');
-    if (!ids.has(id)) {
-      const st = players.get(id);
-      if (st && st.player) st.player.close();
-      players.delete(id);
-      lastById.delete(id);
-      el.remove();
-    }
-  }
-}
-
-function renderScan() {
-  const scanners = scannersFromRegistry;
-  if (!scanners.length) {
-    spectrumPanel.classList.add('hidden');
-    spectrumPanel.innerHTML = '';
-    renderViewer();
-    return;
-  }
-  const store = scanClient.store;
-  const allDets = scanners.flatMap((s) => (store[s.id] && store[s.id].detection && store[s.id].detection.detections) || []);
-  const { keys, newKeys } = diffNewKeys(prevScanKeys, allDets);
-  if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
-  prevScanKeys = Object.keys(store).length ? keys : null;
-  spectrumPanel.classList.remove('hidden');
-  // Preserve typed SDR-view frequencies across the full panel re-render.
-  const typed = {};
-  for (const inp of spectrumPanel.querySelectorAll('[data-scanner-id] .view-freq')) {
-    const b = inp.closest('[data-scanner-id]');
-    if (b && inp.value) typed[b.dataset.scannerId] = inp.value;
-  }
-  renderSpectrum(spectrumPanel, scanners, store, new Set(newKeys));
-  for (const [vid, val] of Object.entries(typed)) {
-    const inp = spectrumPanel.querySelector(`[data-scanner-id="${vid}"] .view-freq`);
-    if (inp && !inp.value) inp.value = val;
-  }
-  renderViewer();
-}
-
-function renderViewer() {
-  const store = scanClient.store;
-  const nowS = Math.floor(Date.now() / 1000);
-  for (const [sid, live] of Object.entries(store)) {
-    if (live.detection) applyDetections(viewerState, sid, live.detection, nowS);
-  }
-  const hasScanners = scannersFromRegistry.length > 0;
-  viewerPanel.classList.toggle('hidden', !hasScanners);
-  if (!hasScanners) { syncViewerPlayer(store, null, null); return; }
-  const routeId = pickViewer(store);                       // where NEW starts go
-  const displayId = activeViewer(store) || routeId;        // whose session the panel shows
-  const view = displayId ? store[displayId].view : null;
-  document.getElementById('viewer-list').innerHTML = viewerListHtml(
-    viewerRows(viewerState, nowS), nowS,
-    view && view.active ? view.freq_mhz : null, !!routeId,
-  );
-  document.getElementById('viewer-badge').textContent = view ? viewCaption(view) : '';
-  document.getElementById('viewer-err').textContent = (view && view.error) || '';
-  document.getElementById('viewer-stop').hidden = !(view && view.active);
-  syncViewerPlayer(store, displayId, view);
-}
-
 // Keep the in-panel WHEP player in sync. The persistent engine keeps one path
 // alive across start/stop/retune, so the key is the stream name: connect once
 // when the panel appears, re-kick only if the connection actually died.
-function syncViewerPlayer(store, viewerId, view) {
+function syncViewerPlayer() {
   const video = document.getElementById('viewer-video');
-  const want = playerKey(view, viewerId ? viewStream(store, viewerId) : '');
+  if (!video) return;                      // view hasn't mounted a player element (e.g. stub screen)
+  const store = scanClient.store;
+  const hasScanners = ctx.scanners().length > 0;
+  const routeId = hasScanners ? pickViewer(store) : null;          // where NEW starts go
+  const displayId = hasScanners ? (activeViewer(store) || routeId) : null; // whose session the panel shows
+  const view = displayId ? store[displayId].view : null;
+  const want = PREVIEW ? '' : playerKey(view, displayId ? viewStream(store, displayId) : '');
   if (want !== viewerStreamKey) {
     if (viewerPlayer && viewerPlayer.player) viewerPlayer.player.close();
     viewerPlayer = null;
@@ -359,20 +60,20 @@ function syncViewerPlayer(store, viewerId, view) {
     if (viewerRetry.timer) clearTimeout(viewerRetry.timer);
     viewerRetry = { timer: null, inflight: false };   // new generation: stale chains go inert
     if (!want) { video.srcObject = null; return; }
-    startViewerWhep(video, viewStream(store, viewerId), viewerRetry, 0);
+    startViewerWhep(video, viewStream(store, displayId), viewerRetry, 0);
     return;
   }
   // Same key, but the player died (encoder respawn, server restart) and the
-  // retries gave up — any view-state tick re-kicks the connection.
+  // retries gave up — any resync tick re-kicks the connection.
   if (want && !viewerPlayer && !viewerRetry.timer && !viewerRetry.inflight) {
-    startViewerWhep(video, viewStream(store, viewerId), viewerRetry, 0);
+    startViewerWhep(video, viewStream(store, displayId), viewerRetry, 0);
   }
 }
 
 // `retry` is this attempt-chain's generation token: minted by syncViewerPlayer,
 // mutated ONLY by its own chain, dead the moment a new generation replaces it.
 async function startViewerWhep(video, stream, retry, attempt) {
-  if (viewerRetry !== retry || attempt > 40) return;
+  if (PREVIEW || viewerRetry !== retry || attempt > 40) return;
   retry.inflight = true;
   try {
     const p = await startWhep(video, `${cfg.webrtcBase}/${stream}/whep`, cfg.readUser, cfg.readPass,
@@ -390,296 +91,180 @@ async function startViewerWhep(video, stream, retry, attempt) {
   }
 }
 
-async function startPlayer(d) {
-  const video = document.getElementById(`vid-${d.id}`);
-  players.set(d.id, { player: null, starting: true });
-  try {
-    const player = await startWhep(video, `${cfg.webrtcBase}/${d.id}/whep`, cfg.readUser, cfg.readPass);
-    players.set(d.id, { player });
-  } catch {
-    players.set(d.id, { player: null }); // clear `starting` so a later tick retries
+// Fold every scanner's latest detection payload into viewerState — ts-idempotent
+// per scanner (applyDetections no-ops on a repeat ts), runs on every data tick
+// regardless of which screen is active so "recent" rows survive a screen switch.
+function foldDetections() {
+  const nowS = Math.floor(Date.now() / 1000);
+  for (const [sid, live] of Object.entries(scanClient.store)) {
+    if (live.detection) applyDetections(viewerState, sid, live.detection, nowS);
   }
 }
 
-// Restart the live WebRTC playback for a tile (tear down + re-establish). Does not touch ingest.
-function restartTile(id) {
-  const st = players.get(id);
-  if (st && st.player) st.player.close();
-  players.delete(id);
-  const video = document.getElementById(`vid-${id}`);
-  if (video) video.srcObject = null;
-  const d = lastById.get(id);
-  if (d && d.online && d.kind !== 'scanner') startPlayer(d); // re-establish now; otherwise the next tick will
-}
+// ==== camera WHEP players (reuse-aware; semantics copied from v1) ===========
+const ctx = {
+  get cfg() { return cfg; },
+  isPreview: PREVIEW,
+  devices: () => devices,
+  scanStore: () => scanClient.store,
+  scanners: () => devices.filter((d) => d.kind === 'scanner'),
+  cameras: () => devices.filter((d) => d.kind !== 'scanner'),
+  viewerState: () => viewerState,
+  newDetKeys: () => newDetKeys,
+  getDetections: async () => {
+    if (PREVIEW) return fx.detections;
+    try { const r = await fetch('/api/detections?limit=200'); return r.ok ? r.json() : []; } catch { return []; }
+  },
+  fetchFrames: async (query) => {
+    if (PREVIEW) return fx.frames;
+    try {
+      const r = await fetch(`/api/frames?${query || ''}`);
+      return { frames: r.ok ? await r.json() : [] };
+    } catch { return { frames: [] }; }
+  },
+  onScanCmd: (id, cmd) => { if (!PREVIEW) scanClient.publishCommand(id, cmd); },
+  onViewStart: (id, freq) => { if (!PREVIEW) scanClient.publishView(id, 'start', freq); },
+  onViewStop: (id) => { if (!PREVIEW) scanClient.publishView(id, 'stop'); },
+  requestRender: () => router.renderActive(),
+  handlers: {},
+};
 
-function restartAll() {
-  for (const id of [...lastById.keys()]) restartTile(id);
-}
+const routes = [
+  { hash: '#/dashboard', label: 'Панель', icon: '▤', section: 'screen-dashboard', mount: renderDashboard },
+  { hash: '#/viewer', label: 'FPV Viewer', icon: '🎯', section: 'screen-viewer', mount: renderViewer },
+  { hash: '#/nodes', label: 'Вузли', icon: '▦', section: 'screen-nodes', mount: renderNodes },
+  { hash: '#/detections', label: 'Детекції', icon: '≣', section: 'screen-detections', mount: renderDetections },
+  { hash: '#/frames', label: 'Кадри', icon: '🖼️', section: 'screen-frames', mount: renderFrames },
+];
+const router = createRouter({ routes, ctx });
+const modals = createModals(ctx);
 
-// ---- fullscreen viewer ----
-let modalPlayer = null;
-function openModal(d) {
-  const modal = document.getElementById('modal');
-  const video = document.getElementById('modal-video');
-  document.getElementById('modal-image').classList.add('hidden');
-  video.classList.remove('hidden');
-  if (modalPlayer) { modalPlayer.close(); modalPlayer = null; }
-  document.getElementById('modal-caption').textContent = `${d.name} — ${d.location}`;
-  modal.classList.remove('hidden');
-  if (d.online) {
-    startWhep(video, `${cfg.webrtcBase}/${d.id}/whep`, cfg.readUser, cfg.readPass)
-      .then((p) => { modalPlayer = p; }).catch(() => {});
+// Dual-action FPV Viewer row click: start the SDR view session at `freq`, and
+// on 5.8G also nudge the RX5808 to the nearest hardware channel (kept from
+// main's spectrumPanel/viewerPanel click handlers). `scannerId` (the reporting
+// scanner, per the ctx contract) is accepted but — matching main's exact
+// behavior — NOT used to pick the target: the target is always whichever
+// view-capable scanner pickViewer() resolves, same as upstream.
+function viewerRowClick(freq, band, scannerId) {
+  if (PREVIEW) return;
+  const store = scanClient.store;
+  const vid = pickViewer(store);
+  if (!vid || !Number.isFinite(freq) || freq < 100 || freq > 6000) return;
+  scanClient.publishView(vid, 'start', freq);
+  if (band === '5.8G') {
+    const rxId = pickRxScanner(store);
+    const ch = nearestRxChannel(freq);
+    if (rxId && ch) scanClient.publishCommand(rxId, { mode: 'manual', channel: ch.name });
   }
-  const close = () => { if (modalPlayer) { modalPlayer.close(); modalPlayer = null; } modal.classList.add('hidden'); };
-  document.getElementById('modal-close').onclick = close;
 }
 
-// Enlarge a recovered scan frame (a base64 PNG) in the shared modal — swaps the WHEP video for an img.
-function openImageModal(src, caption) {
-  const modal = document.getElementById('modal');
-  const video = document.getElementById('modal-video');
-  const img = document.getElementById('modal-image');
-  if (modalPlayer) { modalPlayer.close(); modalPlayer = null; }
-  video.classList.add('hidden');
-  img.src = src;
-  img.classList.remove('hidden');
-  document.getElementById('modal-caption').textContent = caption || '';
-  modal.classList.remove('hidden');
-  const close = () => {
-    img.classList.add('hidden');
-    img.src = '';
-    video.classList.remove('hidden');
-    modal.classList.add('hidden');
-  };
-  document.getElementById('modal-close').onclick = close;
+ctx.handlers = {
+  openVideo: modals.openVideo,
+  openImage: modals.openImage,
+  openAddForm: modals.openAddForm,
+  openEditForm: modals.openEditForm,
+  viewCreds: modals.viewCreds,
+  scannerInfo: modals.scannerInfo,
+  deleteDevice: modals.deleteDevice,
+  // Start WHEP for a camera tile, reusing any existing player. Idempotent: no-op if already playing/starting.
+  startTile: (d, videoEl) => {
+    if (PREVIEW || !d.online) return;
+    const st = players.get(d.id);
+    if (st && (st.player || st.starting)) return;
+    players.set(d.id, { player: null, starting: true });
+    startWhep(videoEl, `${cfg.webrtcBase}/${d.id}/whep`, cfg.readUser, cfg.readPass)
+      .then((p) => players.set(d.id, { player: p }))
+      .catch(() => players.set(d.id, { player: null }));   // clear starting; a later reconcile retries
+  },
+  // Tear down a tile's player (on offline / removal). Safe to call when none exists.
+  closeTile: (id) => { const st = players.get(id); if (st && st.player) st.player.close(); players.delete(id); },
+  // Restart a tile's live playback: close, clear the <video>, let the next reconcile re-establish it.
+  restartTile: (id) => {
+    const st = players.get(id); if (st && st.player) st.player.close(); players.delete(id);
+    const v = document.querySelector(`#tile-${id} video`); if (v) v.srcObject = null;
+    router.renderActive();
+  },
+  viewerRowClick,
+  syncViewerPlayer,
+};
+
+// ---- topbar + sidebar wiring ----
+const soundBtn = document.getElementById('sound-toggle');
+function setSoundUI() { soundBtn.textContent = alerter.armed ? '🔔' : '🔕'; soundBtn.classList.toggle('btn-ghost', alerter.armed); }
+soundBtn.addEventListener('click', () => { alerter.armed ? alerter.disarm() : alerter.arm(); localStorage.setItem('soundArmed', alerter.armed ? '1' : '0'); setSoundUI(); });
+if (localStorage.getItem('soundArmed') === '1') {
+  document.addEventListener('pointerdown', () => { alerter.arm(); setSoundUI(); }, { once: true });
+  soundBtn.textContent = '🔔';
+} else setSoundUI();
+
+document.getElementById('add-device').addEventListener('click', () => modals.openAddForm());
+document.getElementById('logout').addEventListener('click', async () => { if (!PREVIEW) await fetch('/logout', { method: 'POST' }); location.href = '/login.html'; });
+document.getElementById('restart-all').addEventListener('click', () => { for (const d of ctx.cameras()) ctx.handlers.restartTile(d.id); });
+
+const sizeInput = document.getElementById('tile-size');
+sizeInput.value = localStorage.getItem('tileMin') || '320';
+document.documentElement.style.setProperty('--tile-min', `${sizeInput.value}px`);
+sizeInput.addEventListener('input', () => { document.documentElement.style.setProperty('--tile-min', `${sizeInput.value}px`); localStorage.setItem('tileMin', sizeInput.value); });
+
+function computeNewDetKeys() {
+  const all = ctx.scanners().flatMap((s) => (scanClient.store[s.id] && scanClient.store[s.id].detection && scanClient.store[s.id].detection.detections) || []);
+  const { keys, newKeys } = diffNewKeys(prevScanKeys, all);
+  newDetKeys = new Set(newKeys);
+  if (prevScanKeys !== null && newKeys.length && alerter.armed) alerter.beep();
+  prevScanKeys = Object.keys(scanClient.store).length ? keys : null;
 }
-
-// ---- device management ----
-function openAddForm() {
-  showModal(`
-    <h2>Додати вузол</h2>
-    <form id="add-form" class="form">
-      <label>Device ID <small>(лишіть порожнім для автогенерації, напр. pi-07)</small>
-        <input name="id" placeholder="напр. cam-entrance або порожньо" autocomplete="off" />
-      </label>
-      <label>Тип
-        <select name="kind">
-          <option value="camera">Камера</option>
-          <option value="scanner">Сканер (HackRF)</option>
-        </select>
-      </label>
-      <label>Назва
-        <input name="name" placeholder="напр. Вхідні ворота" required />
-      </label>
-      <label>Локація
-        <input name="location" placeholder="напр. Периметр — Північ" />
-      </label>
-      <p class="form-err" id="add-err"></p>
-      <div class="form-actions">
-        <button type="button" data-close class="btn-ghost">Скасувати</button>
-        <button type="submit" class="btn-primary">Створити</button>
-      </div>
-    </form>`);
-  document.getElementById('add-form').addEventListener('submit', submitAdd);
+function updateStatus() {
+  const cams = ctx.cameras();
+  const online = cams.filter((d) => d.online).length;
+  const pill = document.getElementById('status-pill');
+  pill.textContent = `ОПЕРАЦІЙНИЙ · ${online}/${cams.length}`;
+  pill.classList.toggle('warn', online < cams.length);
+  const dets = ctx.scanners().flatMap((s) => (scanClient.store[s.id] && scanClient.store[s.id].detection && scanClient.store[s.id].detection.detections) || []).length;
+  document.getElementById('global-status').textContent = `${dets} активних детекцій`;
 }
-
-async function submitAdd(e) {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const payload = {
-    id: (fd.get('id') || '').trim(),
-    name: (fd.get('name') || '').trim(),
-    location: (fd.get('location') || '').trim(),
-    kind: fd.get('kind') || 'camera',
-  };
-  const errEl = document.getElementById('add-err');
-  errEl.textContent = '';
-  const res = await fetch('/api/devices', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) { errEl.textContent = body.error || `Помилка ${res.status}`; return; }
-  if (body.scanner) scannerInfoModal(body.device, true);
-  else showCreds(body.device, body.push, true);
+// Close players for cameras that no longer exist (deleted/converted), even off the dashboard screen.
+function prunePlayers() {
+  const ids = new Set(ctx.cameras().map((d) => d.id));
+  for (const id of [...players.keys()]) if (!ids.has(id)) ctx.handlers.closeTile(id);
 }
-
-function openEditForm(id) {
-  const d = lastById.get(id) || { id, name: '', location: '' };
-  showModal(`
-    <h2>Редагувати вузол: ${escapeHtml(id)}</h2>
-    <form id="edit-form" class="form">
-      <label>Назва
-        <input name="name" value="${escapeHtml(d.name || '')}" required />
-      </label>
-      <label>Локація
-        <input name="location" value="${escapeHtml(d.location || '')}" />
-      </label>
-      <p class="muted small">ID та пароль не змінюються. Щоб змінити ID — видали вузол і створи новий.</p>
-      <p class="form-err" id="edit-err"></p>
-      <div class="form-actions">
-        <button type="button" data-close class="btn-ghost">Скасувати</button>
-        <button type="submit" class="btn-primary">Зберегти</button>
-      </div>
-    </form>`);
-  document.getElementById('edit-form').addEventListener('submit', (e) => submitEdit(e, id));
+function onData(newDevices) {
+  if (newDevices) devices = newDevices;
+  foldDetections();
+  computeNewDetKeys();
+  updateStatus();
+  prunePlayers();
+  router.renderActive();
 }
-
-async function submitEdit(e, id) {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const payload = { name: (fd.get('name') || '').trim(), location: (fd.get('location') || '').trim() };
-  const errEl = document.getElementById('edit-err');
-  errEl.textContent = '';
-  const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  });
-  if (!res.ok) { const b = await res.json().catch(() => ({})); errEl.textContent = b.error || `Помилка ${res.status}`; return; }
-  const body = await res.json();
-  const el = document.getElementById(`tile-${id}`);
-  if (el) {
-    el.querySelector('.tile-meta strong').textContent = body.device.name;
-    el.querySelector('.tile-meta small').textContent = body.device.location;
-  }
-  const cur = lastById.get(id);
-  if (cur) { cur.name = body.device.name; cur.location = body.device.location; }
-  hideModal();
-}
-
-async function viewCreds(id) {
-  const res = await fetch(`/api/devices/${encodeURIComponent(id)}/push`);
-  if (!res.ok) { alert('Не вдалося отримати креди'); return; }
-  const body = await res.json();
-  showCreds(body.device, body.push, false);
-}
-
-function credRow(label, value) {
-  return `<div class="cred-row">
-    <div class="cred-label"><span>${label}</span><button type="button" class="copy">копіювати</button></div>
-    <pre>${escapeHtml(value)}</pre>
-  </div>`;
-}
-
-function showCreds(device, push, isNew) {
-  showModal(`
-    <h2>${isNew ? '✅ Вузол створено' : '🔑 Креди вузла'}: ${escapeHtml(device.id)}</h2>
-    <p class="muted">${escapeHtml(device.name || '')}${device.location ? ` · ${escapeHtml(device.location)}` : ''}</p>
-    ${credRow('Publish пароль', device.publish_pass)}
-    ${credRow('Команда пушу — RTSP', push.rtsp)}
-    ${credRow('Команда пушу — SRT', push.srt)}
-    <p class="muted small">Налаштуй WireGuard на Pi вручну (як раніше), потім встав цю команду пушу.</p>
-    <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
-}
-
-function scannerInfoModal(device, isNew) {
-  showModal(`
-    <h2>${isNew ? '✅ Сканер створено' : '📡 Сканер'}: ${escapeHtml(device.id)}</h2>
-    <p class="muted">${escapeHtml(device.name || '')}${device.location ? ` · ${escapeHtml(device.location)}` : ''}</p>
-    <p class="muted small">Вузол-сканер (HackRF) — не камера, відео не публікує. Дані йдуть у MQTT-брокер.</p>
-    ${credRow('SCAN_ID на Pi (= id топіка)', device.id)}
-    ${credRow('MQTT-топіки', `fpv/${device.id}/{spectrum,detection,status,video}`)}
-    <p class="muted small">На Pi задай SCAN_MQTT_HOST + MQTT_PUB_USER/PASS (див. deploy-доку). SCAN_ID має дорівнювати id вище.</p>
-    <div class="form-actions"><button type="button" data-close class="btn-primary">Готово</button></div>`);
-}
-
-async function deleteDevice(id, name) {
-  if (!confirm(`Видалити вузол «${name || id}»? Його потік зупиниться, креди стануть недійсними.`)) return;
-  const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) { alert('Помилка видалення'); return; }
-  const st = players.get(id);
-  if (st && st.player) st.player.close();
-  players.delete(id);
-  const el = document.getElementById(`tile-${id}`);
-  if (el) el.remove();
-}
-
-async function deleteScanner(id) {
-  const d = lastById.get(id) || { name: id };
-  if (!confirm(`Видалити сканер «${d.name || id}»?`)) return;
-  const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) { alert('Помилка видалення'); return; }
-  lastById.delete(id);
-  // panel re-renders without this scanner on the next SSE tick
-}
-
-// ---- detection journal ----
-function journalHtml(events) {
-  const rows = (events || []).map((e) => {
-    const t = new Date(Number(e.ts) * 1000);
-    const p = (n) => String(n).padStart(2, '0');
-    const when = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
-    const freq = `${fmtFreq(e.center_mhz)}${e.channel ? ` (${escapeHtml(e.channel)})` : ''}`;
-    const ev = e.event === 'gone'
-      ? '<span class="jr-gone">зник</span>' : '<span class="jr-app">з\'явився</span>';
-    return `<tr>
-      <td>${when}</td>
-      <td>${escapeHtml(e.scanner_id || '')}</td>
-      <td>${escapeHtml(e.band || '')}</td>
-      <td>${freq}</td>
-      <td><span style="color:${classColor(e.class)}">${escapeHtml(e.class || '')}</span></td>
-      <td>${e.snr_db == null ? '—' : escapeHtml(String(e.snr_db))} dB</td>
-      <td>${ev}</td></tr>`;
-  }).join('');
-  const table = (events && events.length)
-    ? `<table class="scan-table jr-table"><thead><tr><th>Час</th><th>Сканер</th><th>Бенд</th><th>Частота</th><th>Клас</th><th>SNR</th><th>Подія</th></tr></thead><tbody>${rows}</tbody></table>`
-    : '<p class="muted">Журнал порожній.</p>';
-  return `<h2>📜 Журнал детекцій <button type="button" id="journal-refresh" class="btn-ghost">оновити</button></h2>
-    ${table}
-    <div class="form-actions"><button type="button" data-close class="btn-primary">Закрити</button></div>`;
-}
-
-async function openJournal() {
-  let events = [];
-  try {
-    const res = await fetch('/api/detections?limit=200');
-    if (res.ok) events = await res.json();
-  } catch { /* show empty on failure */ }
-  showModal(journalHtml(events));
-}
-
-// ---- frames gallery (server archive of demodulated frames) ----
-// Filter state survives modal close/open; resets on page reload. The server
-// does all filtering — every change re-fetches; «Ще» appends older frames.
-const FRAMES_LIMIT = 200;
-let framesFilter = { scanner: '', band: '', standard: '', snrMin: '', from: '', to: '' };
-let framesList = [];
-let framesHasMore = false;
-
-async function fetchFrames({ append = false } = {}) {
-  const extra = { limit: FRAMES_LIMIT };
-  if (append && framesList.length) extra.before = framesList[framesList.length - 1].ts;
-  let batch = [];
-  try {
-    const res = await fetch(`/api/frames?${buildFramesQuery(framesFilter, extra)}`);
-    if (res.ok) batch = await res.json();
-  } catch { /* render what we have */ }
-  framesList = append ? framesList.concat(batch) : batch;
-  framesHasMore = batch.length === FRAMES_LIMIT;
-  showModal(galleryHtml(framesList, {
-    filter: framesFilter,
-    scanners: scannersFromRegistry.map((s) => s.id),
-    hasMore: framesHasMore,
-  }));
-}
-
-function openFrames() { fetchFrames(); }
-
-// ---- live updates ----
 function connectSSE() {
   const es = new EventSource('/api/stream');
-  es.onmessage = (e) => render(JSON.parse(e.data));
-  es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); }; // reconnect
+  es.onmessage = (e) => onData(JSON.parse(e.data));
+  es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };   // EventSource won't auto-retry after close()
 }
 
-function fmtBitrate(kbps) { return kbps == null ? '—' : kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} kbps`; }
-function fmtUptime(s) { if (s == null) return '—'; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return h ? `${h}год ${m}хв` : `${m}хв`; }
-function telemetryLine(t) { const p = []; if (t.rssi != null) p.push(`RSSI ${t.rssi}`); if (t.freq != null) p.push(`${t.freq}`); if (t.alarm) p.push('⚠ ALARM'); return p.join(' · '); }
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-
-(async function init() {
-  cfg = await loadConfig();
-  if (!cfg) return;
-  const first = await fetch('/api/devices').then((r) => r.json());
-  render(first);
+async function boot() {
+  if (PREVIEW) {
+    fx = (await import('/fixtures.js')).FIXTURES;
+    cfg = fx.config;
+    devices = fx.devices;
+    scanClient.store = structuredClone(fx.scanStore);
+    document.getElementById('operator-name').textContent = fx.operator;
+    seedFromJournal(viewerState, fx.detections, Math.floor(Date.now() / 1000));
+    foldDetections();
+    computeNewDetKeys();
+    updateStatus();
+    router.start();
+    window.__rerender = () => router.renderActive();   // dev-only seam to test view/tile reuse
+    setInterval(() => router.renderActive(), 30000);
+    return;
+  }
+  const c = await fetch('/api/config');
+  if (c.status === 401) { location.href = '/login.html'; return; }
+  cfg = await c.json();
+  devices = await fetch('/api/devices').then((r) => r.json());
+  // No per-operator identity in /api/config today; keep the HTML's static default label.
+  computeNewDetKeys();
+  updateStatus();
+  router.start();
   connectSSE();
   try {
     const res = await fetch('/api/detections?limit=500');
@@ -687,7 +272,9 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
   } catch { /* live-only if the journal is unavailable */ }
   try {
     const mq = await fetch('/api/mqtt').then((r) => (r.ok ? r.json() : null));
-    if (mq && mq.url) scanClient.connect(mq, () => renderScan());
+    if (mq && mq.url) scanClient.connect(mq, () => onData());
   } catch { /* no broker creds -> scan panel stays empty until available */ }
-  setInterval(renderViewer, 30000);   // age labels/TTL expiry must advance even when MQTT goes quiet
-})();
+  // Age labels/TTL expiry must advance even when MQTT goes quiet.
+  setInterval(() => router.renderActive(), 30000);
+}
+boot();
