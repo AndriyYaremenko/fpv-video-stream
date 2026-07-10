@@ -6,10 +6,12 @@ after idle() (session over / sweeping). The rawvideo timeline never stops, so
 the MediaMTX path — and the dashboard's WHEP session — survive everything.
 If ffmpeg dies it is respawned with backoff."""
 import logging
+import os
 import subprocess
 import threading
 import time
 
+from osd import IDLE_TEXT
 from stream_demod import FrameQueue, FramePacer, build_encode_cmd, VIEW_CANVAS_HEIGHT
 
 LOG = logging.getLogger("video.viewenc")
@@ -18,6 +20,8 @@ LOG = logging.getLogger("video.viewenc")
 class ViewEncoder:
     def __init__(self, vcfg, popen=None, clock=None, sleep=None, log_every_s=10.0):
         self._vcfg = vcfg
+        self._osd_file = vcfg.view_osd_file
+        self._osd_font = vcfg.view_osd_font
         self._popen = popen or subprocess.Popen
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
@@ -39,10 +43,29 @@ class ViewEncoder:
         self._last = None
         self._stats = None
         self._q.clear()
+        self._write_osd(IDLE_TEXT)
 
     def set_session_stats(self, fn):
         """fn() -> {'mailbox': int, 'dropped_chunks': int, 'sync': dict|None}."""
         self._stats = fn
+
+    def set_osd(self, text):
+        """Atomically publish the OSD label the drawtext filter reloads."""
+        self._write_osd(text)
+
+    def _write_osd(self, text):
+        if not self._osd_file:
+            return
+        try:
+            d = os.path.dirname(self._osd_file)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            tmp = self._osd_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, self._osd_file)      # atomic: drawtext never reads a partial line
+        except Exception:
+            LOG.exception("view OSD write failed")
 
     def start(self):
         self._thread = threading.Thread(target=self._supervise, daemon=True)
@@ -56,11 +79,13 @@ class ViewEncoder:
     def _supervise(self):
         backoff = 1.0
         while not self._stop.is_set():
+            self._write_osd(IDLE_TEXT)           # textfile must exist before drawtext opens it
             enc = None
             try:
                 enc = self._popen(
                     build_encode_cmd(self._vcfg.view_push_url, self._vcfg.view_width,
-                                     VIEW_CANVAS_HEIGHT, self._vcfg.view_fps),
+                                     VIEW_CANVAS_HEIGHT, self._vcfg.view_fps,
+                                     osd_file=self._osd_file, osd_font=self._osd_font),
                     stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
             except Exception:
                 LOG.exception("view encoder spawn failed")
