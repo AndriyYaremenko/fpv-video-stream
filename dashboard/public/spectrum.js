@@ -1,6 +1,4 @@
-import { detectionKey } from './alert.js';
-import { RX5808_CHANNELS } from './rx5808-channels.js';
-// dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + DOM render (browser only).
+// dashboard/public/spectrum.js — spectrum panel: pure helpers (unit-tested) + mini live-spectrum render.
 
 
 export function splitByKind(devices) {
@@ -93,198 +91,17 @@ export function psdColor(db, dbMin = -100, dbMax = -20) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-// ---- DOM rendering (browser only; validated with `node --check` + manual) ----
-
-// renderSpectrum(container, scanners, store): scanners = registry devices (kind=scanner, for
-// name/location/management); store = MqttScanClient store keyed by scanner id (live data).
-export function renderSpectrum(container, scanners, store = {}, highlightKeys = new Set()) {
-  container.innerHTML = '';
-  for (const s of scanners) container.appendChild(scannerBlock(s, store[s.id], highlightKeys));
-}
-
-function scannerBlock(s, live, highlightKeys) {
-  const block = el('div', 'scan-block');
-  block.dataset.scannerId = s.id;
-  const online = !!(live && live.online);
-
-  block.appendChild(el('div', 'scan-head', `
-    <strong>${escapeHtml(s.name)}</strong> <small>${escapeHtml(s.location || '')}</small>
-    <span class="badge ${online ? 'on' : 'off'}">${online ? 'ONLINE' : 'OFFLINE'}</span>
-    <span class="scan-actions">
-      <button class="tile-btn" data-act="info" title="Інфо">🔑</button>
-      <button class="tile-btn" data-act="edit" title="Редагувати">✏️</button>
-      <button class="tile-btn" data-act="del" title="Видалити">🗑</button>
-    </span>`));
-
-  const bandIds = live ? Object.keys(live.bands) : [];
-  if (!online && !bandIds.length) {
-    block.appendChild(el('p', 'scan-empty', 'немає даних'));
-    return block;
-  }
-
-  const det = (live && live.detection) || { detections: [], occupancy: {} };
-
-  // occupancy strip (data-driven over the bands we have)
-  const occ = el('div', 'scan-occ');
-  for (const band of bandIds) {
-    const frac = (det.occupancy && det.occupancy[band]) || 0;
-    occ.appendChild(el('div', 'occ-bar', `
-      <span class="occ-label">${escapeHtml(band)}</span>
-      <span class="occ-track"><span class="occ-fill" style="width:${Math.round(frac * 100)}%"></span></span>
-      <span class="occ-val">${fmtPct(frac)}</span>`));
-  }
-  block.appendChild(occ);
-
-  // recovered analog-video frame (latest): thumbnail + caption, click to enlarge
-  if (live && live.video && live.video.frame_png_b64) {
-    const fw = el('div', 'scan-frame-wrap');
-    const img = el('img', 'scan-frame');
-    img.alt = 'recovered frame';
-    img.src = `data:image/png;base64,${live.video.frame_png_b64}`;
-    fw.appendChild(img);
-    fw.appendChild(el('div', 'scan-frame-cap', escapeHtml(frameCaption(live.video))));
-    block.appendChild(fw);
-  }
-
-  // current RX5808 tuned frequency (auto-hopping receiver feeding the grabber stream)
-  if (live && live.rxtune && live.rxtune.freq_mhz != null) {
-    block.appendChild(el('div', 'scan-rxtune', escapeHtml(rxtuneCaption(live.rxtune))));
-  }
-  block.appendChild(rx5808Controls(live && live.rxtune ? live.rxtune.mode : null));
-  block.appendChild(viewControls(live && live.view));
-
-  // 3 bands in a row: each = live PSD line + scrolling waterfall
-  const charts = el('div', 'scan-charts');
-  const rxFreq = (live && live.rxtune) ? live.rxtune.freq_mhz : null;
-  for (const band of bandIds) {
-    const range = live.bands[band] || {};
-    const psd = (live.latestPsd && live.latestPsd[band]) || [];
-    const frames = (live.waterfalls && live.waterfalls[band]) || [];
-    const dets = (det.detections || []).filter((d) => d.band === band);
-    charts.appendChild(bandCell(band, range, psd, frames, dets, rxFreq, band === '5.8G'));
-  }
-  block.appendChild(charts);
-
-  block.appendChild(detectionTable(det.detections || [], highlightKeys));
-  return block;
-}
-
-// RX5808 control row: mode buttons + channel <select>. activeMode highlights the live mode.
-function rx5808Controls(activeMode) {
-  const row = el('div', 'rx5808-ctl');
-  for (const m of ['auto', 'scan', 'random', 'manual']) {
-    const b = el('button', `rx-mode${m === activeMode ? ' active' : ''}`, m);
-    b.dataset.rxmode = m;
-    row.appendChild(b);
-  }
-  const sel = el('select', 'rx5808-ch');
-  for (const ch of RX5808_CHANNELS) {
-    const o = document.createElement('option');
-    o.value = ch.name; o.textContent = `${ch.name} · ${ch.freq}`;
-    sel.appendChild(o);
-  }
-  row.appendChild(sel);
-  return row;
-}
-
-// SDR live-view controls: frequency field + start/stop + live badge.
-function viewControls(view) {
-  const active = !!(view && view.active);
-  return el('div', 'sdr-view-ctl', `
-    <span class="view-label">📺 SDR</span>
-    <input class="view-freq" type="number" min="100" max="6000" step="1" placeholder="МГц" />
-    <button data-viewact="start">▶ дивитись</button>
-    <button data-viewact="stop"${active ? '' : ' disabled'}>■ свіп</button>
-    <span class="view-badge">${escapeHtml(viewCaption(view))}</span>
-    ${view && view.error ? `<span class="view-err">${escapeHtml(view.error)}</span>` : ''}`);
-}
-
-function bandCell(band, range, psd, frames, dets, rxFreq, tunable) {
-  const wrap = el('div', 'band-cell');
-  wrap.appendChild(el('div', 'band-label', escapeHtml(band)));
-  const w = 240;
-
-  // live PSD line + detection marks
-  const lh = 44;
-  const line = document.createElement('canvas');
-  line.width = w; line.height = lh; line.className = 'chart-line';
-  if (range.low_mhz != null) {
-    line.dataset.lowMhz = range.low_mhz;
-    line.dataset.highMhz = range.high_mhz;
-    line.classList.add('freqpick');                // click -> fill the SDR view field
-    if (tunable) line.classList.add('tunable');    // 5.8G: click also tunes the RX5808
-  }
-  const lc = line.getContext('2d');
-  const pts = psdToPoints(psd, w, lh);
-  if (pts.length) {
-    lc.strokeStyle = '#6ca0ff'; lc.lineWidth = 1; lc.beginPath();
-    pts.forEach((p, i) => (i ? lc.lineTo(p.x, p.y) : lc.moveTo(p.x, p.y)));
-    lc.stroke();
-  }
-  for (const d of dets) {
-    const x = detectionX(d.center_mhz, range.low_mhz, range.high_mhz, w);
-    lc.strokeStyle = classColor(d.class); lc.lineWidth = 2;
-    lc.beginPath(); lc.moveTo(x, 0); lc.lineTo(x, lh); lc.stroke();
-  }
-  // RX5808 tuned-frequency marker (only on the band that contains it, e.g. 5.8G)
+// ---- mini live spectrum (PSD line + marks only; NO waterfall) ----
+export function renderMiniSpectrum(canvas, { psd = [], range = {}, dets = [], rxFreq = null, tunable = false }) {
+  const w = canvas.width, h = canvas.height, c = canvas.getContext('2d');
+  c.clearRect(0, 0, w, h);
+  const pts = psdToPoints(psd, w, h);
+  if (pts.length) { c.strokeStyle = '#00e5ff'; c.lineWidth = 1; c.beginPath();
+    pts.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y))); c.stroke(); }
+  for (const d of dets) { const x = detectionX(d.center_mhz, range.low_mhz, range.high_mhz, w);
+    c.strokeStyle = classColor(d.class); c.lineWidth = 2; c.beginPath(); c.moveTo(x,0); c.lineTo(x,h); c.stroke(); }
   if (rxFreq != null && range.low_mhz != null && rxFreq >= range.low_mhz && rxFreq <= range.high_mhz) {
     const x = detectionX(rxFreq, range.low_mhz, range.high_mhz, w);
-    lc.strokeStyle = '#39d0ff'; lc.lineWidth = 2;
-    lc.beginPath(); lc.moveTo(x, 0); lc.lineTo(x, lh); lc.stroke();
-  }
-  wrap.appendChild(line);
-
-  // waterfall: one pixel row per frame, newest on top
-  const rows = frames.length;
-  const wf = document.createElement('canvas');
-  wf.width = w; wf.height = Math.max(1, rows); wf.className = 'chart-wf';
-  const wc = wf.getContext('2d');
-  for (let r = 0; r < rows; r += 1) {
-    const f = frames[rows - 1 - r];           // newest first
-    const p = f.psd || [];
-    const n = p.length;
-    if (!n) continue;
-    for (let x = 0; x < w; x += 1) {
-      const idx = n === 1 ? 0 : Math.round((x / (w - 1)) * (n - 1));
-      wc.fillStyle = psdColor(p[idx]);
-      wc.fillRect(x, r, 1, 1);
-    }
-  }
-  wrap.appendChild(wf);
-  return wrap;
-}
-
-function el(tag, cls, html) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (html != null) e.innerHTML = html;
-  return e;
-}
-
-function detectionTable(dets, highlightKeys = new Set()) {
-  if (!dets.length) return el('p', 'scan-empty', 'немає активних передавачів');
-  const sorted = [...dets].sort((a, b) => (b.power_dbm ?? -999) - (a.power_dbm ?? -999));
-  const table = el('table', 'scan-table',
-    '<thead><tr><th></th><th>Бенд</th><th>Частота</th><th>Клас</th><th>RSSI</th><th>Смуга</th><th>Впевн.</th></tr></thead>');
-  const tb = el('tbody');
-  for (const d of sorted) {
-    const isNew = highlightKeys.has(detectionKey(d));
-    const tr = el('tr', isNew ? 'is-new' : null);
-    const freq = `${fmtFreq(d.center_mhz)}${d.channel ? ` (${escapeHtml(d.channel)})` : ''}`;
-    tr.innerHTML = `
-      <td>${isNew ? '⚠' : ''}<button class="tile-btn" data-viewfreq="${Number(d.center_mhz)}" title="Дивитись цю частоту (SDR)">▶</button></td>
-      <td>${escapeHtml(d.band)}</td>
-      <td>${freq}</td>
-      <td><span class="cls" style="color:${classColor(d.class)}">${escapeHtml(d.class)}</span></td>
-      <td>${d.power_dbm == null ? '—' : escapeHtml(String(d.power_dbm))} dBm</td>
-      <td>${d.bandwidth_mhz == null ? '—' : escapeHtml(String(d.bandwidth_mhz))} МГц</td>
-      <td>${fmtPct(d.confidence)}</td>`;
-    tb.appendChild(tr);
-  }
-  table.appendChild(tb);
-  return table;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    c.strokeStyle = '#39d0ff'; c.lineWidth = 2; c.beginPath(); c.moveTo(x,0); c.lineTo(x,h); c.stroke(); }
+  if (tunable) canvas.classList.add('tunable');
 }
