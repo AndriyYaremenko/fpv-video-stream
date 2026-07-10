@@ -413,3 +413,74 @@ def run_stream_persistent(vcfg, freq_mhz, stop_event, max_s, encoder,
         except Exception:
             pass
     return error
+
+
+SOURCE_READ_TIMEOUT_S = 0.5   # also the stop-event responsiveness bound
+SILENCE_RECOVER_S = 3.0       # continuous rx silence before a device reopen
+CAPTURE_STALL_LIMIT = 3       # reopen attempts before the session errors out
+
+
+def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=None):
+    """Session demod loop over an in-process CaptureSource (PR-C engine).
+
+    tune() is milliseconds, so a retune re-enters here with the SAME open
+    source — no subprocess restarts anywhere. Rx silence > SILENCE_RECOVER_S
+    triggers source.recover() (USB-wedge watchdog); CAPTURE_STALL_LIMIT
+    consecutive recoveries end the session with an error. The caller's reset
+    hook (ViewController) closes the source so the sweep can reclaim the
+    device."""
+    clock = clock or time.monotonic
+    fs = vcfg.view_sample_rate_hz
+    chunk_bytes = int(fs * 2 * CHUNK_S)
+    standard = None
+    tracker = None
+    error = None
+    silent_s = 0.0
+    recoveries = 0
+    try:
+        source.tune(freq_mhz * 1e6)
+    except Exception as e:
+        return f"capture tune failed: {e}"
+    t_end = clock() + max_s
+    frame_budget = max(1, int(round(CHUNK_S * vcfg.view_fps)))
+    while not stop_event.is_set() and clock() < t_end:
+        buf = source.read_chunk(chunk_bytes, timeout_s=SOURCE_READ_TIMEOUT_S)
+        if buf is None:
+            silent_s += SOURCE_READ_TIMEOUT_S
+            if silent_s < SILENCE_RECOVER_S:
+                continue
+            if recoveries >= CAPTURE_STALL_LIMIT:
+                error = "capture stalled"
+                break
+            recoveries += 1
+            LOG.warning("view capture stalled; reopening device (%d/%d)",
+                        recoveries, CAPTURE_STALL_LIMIT)
+            try:
+                source.recover()
+            except Exception as e:
+                error = f"capture recover failed: {e}"
+                break
+            silent_s = 0.0
+            continue
+        silent_s = 0.0
+        iq = iq_from_int8_fast(buf)
+        if standard is None:
+            bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
+            standard = pick_standard(bb, fs, vcfg.view_standard,
+                                     vcfg.line_snr_db, vcfg.harm_snr_db)
+            tracker = SyncTracker(standard)
+            tracker.seed(bb, fs)
+            trk, src = tracker, source
+            encoder.set_session_stats(lambda: {
+                "mailbox": src.pending_bytes() // chunk_bytes,
+                "dropped_chunks": src.dropped_bytes // chunk_bytes,
+                "sync": trk.status()})
+            LOG.info("view stream: %s -> %dx%d canvas @%.0ffps (in-process capture)",
+                     standard, vcfg.view_width, VIEW_CANVAS_HEIGHT, vcfg.view_fps)
+        for fr in select_frames(
+                chunk_to_frames(iq, fs, standard, vcfg.view_width, VIEW_CANVAS_HEIGHT,
+                                vcfg.lpf_cutoff_hz, vcfg.blank_frac,
+                                budget=frame_budget, tracker=tracker),
+                CHUNK_S, vcfg.view_fps):
+            encoder.submit(fr.tobytes())
+    return error

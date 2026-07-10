@@ -563,3 +563,61 @@ def test_run_stream_persistent_times_out():
                                 encoder=_FakeEncoder(), popen=popen, clock=lambda: t[0],
                                 sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.05)))
     assert err is None                               # deadline reached = clean exit
+
+
+from stream_demod import run_stream_source
+
+
+class _FakeSource:
+    """Yields prepared chunks, then None (underrun) forever; sets stop when told."""
+    def __init__(self, chunks, stop=None, stop_after=None):
+        self._chunks = list(chunks)
+        self._stop = stop
+        self._stop_after = stop_after
+        self.reads = 0
+        self.tunes = []
+        self.recovers = 0
+        self.dropped_bytes = 0
+    def tune(self, hz):
+        self.tunes.append(hz)
+    def read_chunk(self, n, timeout_s):
+        self.reads += 1
+        if self._stop is not None and self._stop_after is not None \
+                and self.reads > self._stop_after:
+            self._stop.set()
+        return self._chunks.pop(0) if self._chunks else None
+    def recover(self):
+        self.recovers += 1
+    def pending_bytes(self):
+        return 0
+
+
+def test_run_stream_source_tunes_once_and_submits_frames():
+    fs = 4e6
+    stop = threading.Event()
+    src = _FakeSource([bytes(_chunk_bytes(fs))], stop=stop, stop_after=1)
+    fenc = _FakeEncoder()
+    err = run_stream_source(_vcfg(), src, 947.0, stop, max_s=60.0, encoder=fenc,
+                            clock=lambda: 0.0)
+    assert err is None                                   # stop event = clean exit
+    assert src.tunes == [947.0 * 1e6]
+    assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)
+    assert fenc.stats_fn is not None
+
+
+def test_run_stream_source_watchdog_recovers_then_gives_up():
+    src = _FakeSource([])                                # silence from the start
+    fenc = _FakeEncoder()
+    err = run_stream_source(_vcfg(), src, 947.0, threading.Event(), max_s=60.0,
+                            encoder=fenc, clock=lambda: 0.0)
+    assert err == "capture stalled"
+    assert src.recovers == 3                             # 3 reopen attempts, then give up
+
+
+def test_run_stream_source_reports_tune_failure():
+    class _Broken(_FakeSource):
+        def tune(self, hz):
+            raise RuntimeError("no device")
+    err = run_stream_source(_vcfg(), _Broken([]), 947.0, threading.Event(),
+                            max_s=60.0, encoder=_FakeEncoder(), clock=lambda: 0.0)
+    assert "no device" in err
