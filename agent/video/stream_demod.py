@@ -13,6 +13,7 @@ from standard import detect_standard
 from frame import reconstruct_frames
 from render import normalize_luma
 from sync_tracker import SyncTracker
+from osd import DEFAULT_OSD_FONT, osd_text
 
 LOG = logging.getLogger("video.stream")
 
@@ -27,16 +28,23 @@ def build_capture_cmd(freq_hz, sample_rate_hz, lna=40, vga=20, amp=0):
             "-l", str(int(lna)), "-g", str(int(vga)), "-a", str(int(amp))]
 
 
-def build_encode_cmd(push_url, width, height, fps):
+def build_encode_cmd(push_url, width, height, fps, osd_file=None, osd_font=DEFAULT_OSD_FONT):
     """ffmpeg argv: raw gray frames on stdin -> low-latency H.264 RTSP push.
     -g fps = an IDR every ~1 s so a WHEP viewer joining mid-stream decodes
-    within a second (libx264's default 250-frame GOP is ~17 s at 15 fps)."""
-    return ["ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{width}x{height}",
-            "-r", str(fps), "-i", "-",
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+    within a second (libx264's default 250-frame GOP is ~17 s at 15 fps).
+    osd_file (when set) burns a top-right reload=1 drawtext label into the video."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+           "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{width}x{height}",
+           "-r", str(fps), "-i", "-"]
+    if osd_file:
+        cmd += ["-vf",
+                (f"drawtext=fontfile={osd_font}:textfile={osd_file}:reload=1"
+                 ":x=w-tw-10:y=10:fontsize=18:fontcolor=white"
+                 ":box=1:boxcolor=black@0.5:boxborderw=6")]
+    cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
             "-g", str(max(1, int(round(fps)))),
             "-pix_fmt", "yuv420p", "-f", "rtsp", "-rtsp_transport", "tcp", push_url]
+    return cmd
 
 
 def pick_standard(baseband, fs, forced="auto", line_snr_db=10.0, harm_snr_db=6.0):
@@ -346,8 +354,14 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
     return error
 
 
+def _osd_for(freq_mhz, standard, channel_of):
+    ch = channel_of(freq_mhz) if channel_of else None
+    return osd_text(freq_mhz, standard, ch)
+
+
 def run_stream_persistent(vcfg, freq_mhz, stop_event, max_s, encoder,
-                          lna=40, vga=20, amp=0, popen=None, clock=None, sleep=None):
+                          lna=40, vga=20, amp=0, popen=None, clock=None, sleep=None,
+                          channel_of=None):
     """Session capture->demod loop for the persistent-encoder engine.
 
     Spawns ONLY hackrf_transfer; frames go to the long-lived ViewEncoder, which
@@ -378,6 +392,7 @@ def run_stream_persistent(vcfg, freq_mhz, stop_event, max_s, encoder,
     threading.Thread(target=_reader, daemon=True).start()
     t_end = clock() + max_s
     frame_budget = max(1, int(round(CHUNK_S * vcfg.view_fps)))
+    encoder.set_osd(_osd_for(freq_mhz, None, channel_of))
     try:
         while not stop_event.is_set() and clock() < t_end:
             buf = mailbox.take()
@@ -400,6 +415,7 @@ def run_stream_persistent(vcfg, freq_mhz, stop_event, max_s, encoder,
                     "sync": trk.status()})
                 LOG.info("view stream: %s -> %dx%d canvas @%.0ffps", standard,
                          vcfg.view_width, VIEW_CANVAS_HEIGHT, vcfg.view_fps)
+                encoder.set_osd(_osd_for(freq_mhz, standard, channel_of))
             for fr in select_frames(
                     chunk_to_frames(iq, fs, standard, vcfg.view_width, VIEW_CANVAS_HEIGHT,
                                     vcfg.lpf_cutoff_hz, vcfg.blank_frac,
@@ -420,7 +436,8 @@ SILENCE_RECOVER_S = 3.0       # continuous rx silence before a device reopen
 CAPTURE_STALL_LIMIT = 3       # reopen attempts before the session errors out
 
 
-def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=None):
+def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=None,
+                      channel_of=None):
     """Session demod loop over an in-process CaptureSource (PR-C engine).
 
     tune() is milliseconds, so a retune re-enters here with the SAME open
@@ -443,6 +460,7 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
         return f"capture tune failed: {e}"
     t_end = clock() + max_s
     frame_budget = max(1, int(round(CHUNK_S * vcfg.view_fps)))
+    encoder.set_osd(_osd_for(freq_mhz, None, channel_of))
     while not stop_event.is_set() and clock() < t_end:
         buf = source.read_chunk(chunk_bytes, timeout_s=SOURCE_READ_TIMEOUT_S)
         if buf is None:
@@ -477,6 +495,7 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
                 "sync": trk.status()})
             LOG.info("view stream: %s -> %dx%d canvas @%.0ffps (in-process capture)",
                      standard, vcfg.view_width, VIEW_CANVAS_HEIGHT, vcfg.view_fps)
+            encoder.set_osd(_osd_for(freq_mhz, standard, channel_of))
         for fr in select_frames(
                 chunk_to_frames(iq, fs, standard, vcfg.view_width, VIEW_CANVAS_HEIGHT,
                                 vcfg.lpf_cutoff_hz, vcfg.blank_frac,

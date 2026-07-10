@@ -5,11 +5,13 @@ from stream_demod import VIEW_CANVAS_HEIGHT
 from view_encoder import ViewEncoder
 
 
-def _vcfg(width=4, fps=50.0):
+def _vcfg(width=4, fps=50.0, osd_file="", osd_font=None):
     c = VideoConfig()
     c.view_push_url = "rtsp://u:p@10.8.0.1:8554/hackrf-view"
     c.view_width = width
     c.view_fps = fps
+    c.view_osd_file = osd_file
+    c.view_osd_font = osd_font if osd_font is not None else __file__   # an existing file so isfile() passes
     return c
 
 
@@ -139,3 +141,70 @@ def test_supervisor_stop_kills_child_and_exits():
     ve._popen = lambda cmd, **kw: enc
     ve._supervise()
     assert enc.killed
+
+
+def test_set_osd_and_idle_write_the_file(tmp_path):
+    osd = tmp_path / "osd.txt"
+    ve = ViewEncoder(_vcfg(osd_file=str(osd)))
+    ve.set_osd("947 MHz · PAL")
+    assert osd.read_text(encoding="utf-8") == "947 MHz · PAL"
+    ve.idle()
+    assert osd.read_text(encoding="utf-8") == "—"
+
+
+def test_supervise_writes_idle_osd_and_adds_vf_before_spawn(tmp_path):
+    osd = tmp_path / "osd.txt"
+    clk = _Clock()
+    ve = ViewEncoder(_vcfg(osd_file=str(osd)), clock=clk, sleep=clk.sleep)
+    seen = {}
+
+    def popen(cmd, **kw):
+        ve._stop.set()                       # stop FIRST: a failed assert must not hang the loop
+        seen["vf"] = "-vf" in cmd
+        return _FakeEnc()
+    ve._popen = popen
+    ve._supervise()
+    assert seen["vf"] is True                # drawtext filter present when OSD enabled
+    assert osd.read_text(encoding="utf-8") == "—"   # textfile exists before ffmpeg opens it
+
+
+def test_osd_disabled_is_noop_and_no_vf(tmp_path):
+    ve = ViewEncoder(_vcfg(osd_file=""))         # disabled
+    ve.set_osd("947 MHz")                          # must not raise, must not create a file
+    seen = {}
+
+    def popen(cmd, **kw):
+        seen["vf"] = "-vf" in cmd
+        ve._stop.set()
+        return _FakeEnc()
+    ve._popen = popen
+    ve._supervise()
+    assert seen["vf"] is False
+
+
+def test_supervise_keeps_live_label_across_respawn(tmp_path):
+    osd = tmp_path / "osd.txt"
+    clk = _Clock()
+    ve = ViewEncoder(_vcfg(osd_file=str(osd)), clock=clk, sleep=clk.sleep)
+    ve.set_osd("5800 MHz F4 · PAL")              # a live session set its label
+    def popen(cmd, **kw):
+        ve._stop.set()
+        return _FakeEnc()
+    ve._popen = popen
+    ve._supervise()                              # a (re)spawn happens
+    assert osd.read_text(encoding="utf-8") == "5800 MHz F4 · PAL"   # NOT clobbered to —
+
+
+def test_supervise_drops_osd_when_font_missing(tmp_path):
+    osd = tmp_path / "osd.txt"
+    clk = _Clock()
+    ve = ViewEncoder(_vcfg(osd_file=str(osd), osd_font=str(tmp_path / "nope.ttf")),
+                     clock=clk, sleep=clk.sleep)
+    seen = {}
+    def popen(cmd, **kw):
+        ve._stop.set()
+        seen["vf"] = "-vf" in cmd
+        return _FakeEnc()
+    ve._popen = popen
+    ve._supervise()
+    assert seen["vf"] is False                   # missing font -> overlay dropped, stream still spawns
