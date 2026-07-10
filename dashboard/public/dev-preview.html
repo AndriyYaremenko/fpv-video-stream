@@ -1,0 +1,22 @@
+<!doctype html><html lang="uk"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Styleguide — Tactical</title><link rel="stylesheet" href="/styles.css"></head>
+<body style="padding:24px;display:flex;flex-direction:column;gap:18px;max-width:900px;margin:0 auto;">
+  <h1 class="mono">STYLEGUIDE</h1>
+  <div><span class="pip on">ONLINE</span> <span class="pip off">OFFLINE</span>
+       <span class="pip warn">TRACK</span> <span class="pip threat">THREAT</span></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn">Ghost line</button><button class="btn btn-primary">Primary</button>
+    <button class="btn btn-ghost">Green ghost</button><button class="btn btn-alert">Acknowledge</button></div>
+  <div class="card corner"><span class="cm-bl"></span><span class="cm-br"></span>
+    <div class="label-caps">Node telemetry</div>
+    <div class="mono" style="font-size:20px">42.8°C · 5.8G</div></div>
+  <div class="det-card analog is-new"><div class="dc-top">
+    <span class="dc-freq mono">5800 МГц</span><span class="pip warn">NEW</span></div>
+    <div class="dc-meta">5.8G · SNR 18 dB · bladerf · 12:03:20</div></div>
+  <div class="occ-bar"><span class="occ-label">5.8G</span>
+    <span class="occ-track"><span class="occ-fill" style="width:32%"></span></span><span class="occ-val">32%</span></div>
+  <table class="data-table"><thead><tr><th>Час</th><th>Частота</th><th>Клас</th><th>SNR</th></tr></thead>
+    <tbody><tr class="is-new"><td>12:03:20</td><td>5800 МГц</td><td style="color:var(--on)">analog</td><td>18 dB</td></tr>
+    <tr><td>12:01:00</td><td>1280 МГц</td><td style="color:var(--warn)">digital</td><td>12 dB</td></tr></tbody></table>
+</body></html>
