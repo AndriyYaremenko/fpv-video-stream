@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   emptyViewer, applyDetections, seedFromJournal, viewerRows,
   pickViewer, pickRxScanner, viewStream, ageLabel, RECENT_TTL_S, LIVE_STALE_S,
-  viewerListHtml, activeViewer, playerKey,
+  viewerListHtml, activeViewer, playerKey, whepRetryDelay,
 } from '../dashboard/public/viewer.js';
 
 const det = (over = {}) => ({
@@ -173,4 +173,12 @@ test('viewerListHtml rounds SNR to one decimal', () => {
   const rows = [{ key: 'k', band: 'B3', center_mhz: 3410, channel: null, class: 'analog',
     snr_db: 52.72184943844118, power_dbm: -50, scanners: { b: 100 }, seen_by: { b: true }, last_seen: 100, live: true }];
   assert.match(viewerListHtml(rows, 100), /52\.7 dB/);
+});
+
+test('whepRetryDelay backs off 300ms -> 1.5s cap', () => {
+  assert.equal(whepRetryDelay(0), 300);
+  assert.equal(whepRetryDelay(1), 600);
+  assert.equal(whepRetryDelay(2), 1200);
+  assert.equal(whepRetryDelay(3), 1500);
+  assert.equal(whepRetryDelay(10), 1500);
 });

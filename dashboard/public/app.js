@@ -7,7 +7,7 @@ import { nearestRxChannel } from '/rx5808-channels.js';
 import { galleryHtml, buildFramesQuery, toLocalDatetime } from '/frames-gallery.js';
 import {
   emptyViewer, applyDetections, seedFromJournal, viewerRows, viewerListHtml,
-  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey,
+  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey, whepRetryDelay,
 } from '/viewer.js';
 
 let cfg = null;
@@ -365,7 +365,7 @@ async function startViewerWhep(video, stream, key, attempt) {
     if (viewerStreamKey !== key) { p.close(); return; }
     viewerPlayer = { player: p };
   } catch {
-    setTimeout(() => startViewerWhep(video, stream, key, attempt + 1), 1500);
+    setTimeout(() => startViewerWhep(video, stream, key, attempt + 1), whepRetryDelay(attempt));
   }
 }
 
