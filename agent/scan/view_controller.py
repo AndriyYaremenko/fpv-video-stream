@@ -20,11 +20,12 @@ class ViewController:
     the stop command, the max_s deadline, or a streamer error — then the sweep
     resumes. Never raises into callers."""
 
-    def __init__(self, publisher, run_stream, max_s=600.0, reset=None, clock=None, stream=None):
+    def __init__(self, publisher, run_stream, max_s=600.0, reset=None, clock=None, stream=None, on_idle=None):
         self._publisher = publisher
         self._run_stream = run_stream        # fn(freq_mhz, stop_event, max_s) -> error|None
         self._max_s = max_s
         self._reset = reset or (lambda: None)
+        self._on_idle = on_idle or (lambda: None)
         self._clock = clock or time.time
         self._stream = stream                # WHEP stream name, echoed in every state publish
         self._last = (False, None, None, None)   # (active, freq_mhz, until_ts, error)
@@ -91,6 +92,10 @@ class ViewController:
                 LOG.info("view retune -> %.1f MHz", nxt)
                 freq = nxt
         finally:
+            try:
+                self._on_idle()          # persistent engine: blank the stream to black
+            except Exception:
+                LOG.exception("view: on_idle failed")
             self._pub(int(self._clock()), False, None, None, error)
             try:
                 self._reset()            # leave the device clean for the next sweep

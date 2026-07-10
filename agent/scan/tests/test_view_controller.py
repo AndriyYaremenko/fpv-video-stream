@@ -173,3 +173,20 @@ def test_stop_after_pending_start_cancels_the_retune():
     assert [c["freq_mhz"] for c in actives] == [5865.0]    # no retune happened
     assert pub.calls[-1]["active"] is False
     assert vc.has_pending() is False
+
+
+def test_run_view_calls_on_idle_once_at_session_end():
+    order = []
+    vc = ViewController(_Pub(), lambda f, s, m: None, max_s=60.0,
+                        reset=lambda: order.append("reset"),
+                        on_idle=lambda: order.append("idle"))
+    vc.run_view(5000.0)
+    assert order == ["idle", "reset"]
+
+
+def test_on_idle_failure_does_not_break_session_end():
+    def boom():
+        raise RuntimeError("boom")
+    vc = ViewController(_Pub(), lambda f, s, m: None, max_s=60.0,
+                        reset=lambda: None, on_idle=boom)
+    assert vc.run_view(5000.0) is None             # error swallowed, session ends clean
