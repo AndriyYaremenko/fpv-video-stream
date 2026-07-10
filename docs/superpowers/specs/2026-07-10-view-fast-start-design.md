@@ -71,20 +71,26 @@ One ffmpeg process lives for the whole agent lifetime and pushes RTSP to MediaMT
 
 ### 2b. Capture abstraction (agent) — PR-C
 
-New `CaptureSource` interface (agent/video or agent/scan, mirroring `bladerf_source.py` placement):
+`CaptureSource` interface (`agent/scan/hackrf_source.py`, mirroring `bladerf_source.py` placement):
 
 ```
-open(sample_rate_hz)      # claim the device, start streaming
-tune(freq_hz)             # retune WITHOUT stopping the stream; flush transient samples
-read_chunk() -> bytes|None  # one CHUNK_S of int8 IQ; None on timeout (watchdog input)
-close()                   # release the device (sweep needs it back)
+HackrfSource(open_radio, sample_rate_hz, ring_s=2.0)  # ring sized for ring_s seconds of IQ
+tune(freq_hz)                       # lazy-opens the device on first call; retunes WITHOUT
+                                     # stopping the stream; flushes the tune transient
+read_chunk(n_bytes, timeout_s) -> bytes|None  # exactly n_bytes of int8 IQ, arrival order;
+                                               # None on timeout (watchdog input)
+recover()                           # USB-wedge watchdog action: close + reopen + retune
+close()                             # release the device (sweep needs it back); idempotent
+pending_bytes() -> int              # bytes currently buffered in the ring
+dropped_bytes                       # property: bytes dropped by ring overflow (dropped_chunks stat)
 ```
 
-- **`HackRFSource`** — cffi binding over `libhackrf` (same pattern as the bladeRF cffi source):
+- **`HackrfSource`** — cffi binding over `libhackrf` (same pattern as the bladeRF cffi source):
   the rx callback fills a bounded ring buffer (drop-oldest, counted — feeds the existing
-  `dropped_chunks` stat); `read_chunk()` assembles 0.5 s chunks from the ring; `tune()` calls
-  `hackrf_set_freq()` live (milliseconds) and flushes the ring so the tune transient never reaches
-  the demod.
+  `dropped_chunks` stat); `read_chunk()` assembles 0.5 s chunks from the ring; `tune()` opens the
+  device lazily on first use, then calls `hackrf_set_freq()` live (milliseconds) and flushes the
+  ring so the tune transient never reaches the demod; `recover()` is the watchdog's close+reopen+
+  retune.
 - The subprocess `hackrf_transfer` path remains available as the `legacy` engine (see Rollback).
 
 ### 2c. Retune without restart (agent) — PR-C
@@ -117,8 +123,9 @@ The writer keeps its pacer and stats log; only the frame source changes:
 | `TUNING` (device opening or retune transient) | freeze of the last live frame; black if none yet |
 | `LIVE` | demod frames from the queue |
 
-Implementation: when the frame queue stays empty longer than ~0.5 s, the writer emits the
-placeholder/last frame at fps pace. No separate feeder thread; the timeline is self-healing.
+Implementation: the writer's queue read blocks for at most one frame period (1/fps ≈ 67 ms at
+15 fps); if no live frame has arrived by then it emits the placeholder/last frame instead, at fps
+pace. No separate feeder thread; the rawvideo timeline never has gaps — it is self-healing.
 
 ### Failure handling
 
@@ -131,6 +138,9 @@ placeholder/last frame at fps pace. No separate feeder thread; the timeline is s
   disappears for a few seconds and the dashboard's existing retry loop reconnects.
 - **Rollback:** env `VIEW_ENGINE=persistent|legacy` (default `persistent`). `legacy` restores
   today's behaviour exactly (per-session `hackrf_transfer` + per-session ffmpeg) for safe deploys.
+  Caveat: the PR-B dashboard keys the player to the stream name and expects an always-on MediaMTX
+  path; under `VIEW_ENGINE=legacy` the path exists only during sessions, so an idle dashboard logs
+  periodic failed WHEP fetches (404 retries) — harmless but expected during a rollback drill.
 
 ## PR split (deploy order)
 

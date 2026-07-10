@@ -265,14 +265,27 @@ def main() -> None:
                 import stream_demod
                 from view_controller import ViewController, stream_name_from_push_url
                 encoder = None
+                reset = reset_hackrf
                 if viewcfg.view_engine == "persistent":
                     from view_encoder import ViewEncoder
                     encoder = ViewEncoder(viewcfg)
                     encoder.start()          # RTSP path (black placeholder) is up from boot
-                    run = lambda freq, stop, max_s: stream_demod.run_stream_persistent(
-                        viewcfg, freq, stop, max_s, encoder,
-                        lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
+                    if cfg.sdr == "hackrf" and cfg.source == "live":
+                        from hackrf_source import HackrfSource, open_hackrf_radio
+                        source = HackrfSource(
+                            lambda: open_hackrf_radio(cfg.lna_gain, cfg.vga_gain, cfg.amp_enable),
+                            viewcfg.view_sample_rate_hz)
+                        run = lambda freq, stop, max_s: stream_demod.run_stream_source(
+                            viewcfg, source, freq, stop, max_s, encoder)
+                        reset = source.close     # release the device for the sweep; no USB re-enum per session
+                    else:
+                        run = lambda freq, stop, max_s: stream_demod.run_stream_persistent(
+                            viewcfg, freq, stop, max_s, encoder,
+                            lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
                 else:
+                    if viewcfg.view_engine != "legacy":
+                        LOG.warning("view: unknown VIEW_ENGINE %r -> legacy pipeline",
+                                    viewcfg.view_engine)
                     run = lambda freq, stop, max_s: stream_demod.run_stream(
                         viewcfg, freq, stop, max_s,
                         lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
@@ -280,7 +293,7 @@ def main() -> None:
                     publisher,
                     run_stream=run,
                     max_s=viewcfg.view_max_s,
-                    reset=reset_hackrf,
+                    reset=reset,
                     stream=stream_name_from_push_url(viewcfg.view_push_url),
                     on_idle=encoder.idle if encoder is not None else None,
                 )
