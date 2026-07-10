@@ -263,6 +263,13 @@ def test_frame_queue_close_drains_then_none():
     assert q.get(timeout=0.01) is None            # drained -> end of stream
 
 
+def test_frame_queue_clear_drops_pending():
+    q = FrameQueue(maxlen=4)
+    q.put(b"a"); q.put(b"b")
+    q.clear()
+    assert len(q) == 0 and q.get(timeout=0.01) is None
+
+
 from stream_demod import writer_loop
 
 

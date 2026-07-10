@@ -17,6 +17,7 @@ from sync_tracker import SyncTracker
 LOG = logging.getLogger("video.stream")
 
 VIEW_HEIGHT = {"PAL": 288, "NTSC": 240}
+VIEW_CANVAS_HEIGHT = 288   # fixed encoder canvas (PAL field height); NTSC is row-resampled up
 
 
 def build_capture_cmd(freq_hz, sample_rate_hz, lna=40, vga=20, amp=0):
@@ -158,6 +159,10 @@ class FrameQueue:
         with self._cond:
             self._closed = True
             self._cond.notify_all()
+
+    def clear(self):
+        with self._cond:
+            self._d.clear()
 
 
 def select_frames(frames, chunk_s, fps):
