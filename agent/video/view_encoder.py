@@ -60,7 +60,7 @@ class ViewEncoder:
             d = os.path.dirname(self._osd_file)
             if d:
                 os.makedirs(d, exist_ok=True)
-            tmp = self._osd_file + ".tmp"
+            tmp = f"{self._osd_file}.{threading.get_ident()}.tmp"   # per-thread: concurrent writers never share a tmp
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(text)
             os.replace(tmp, self._osd_file)      # atomic: drawtext never reads a partial line

@@ -155,14 +155,16 @@ def test_supervise_writes_idle_osd_and_adds_vf_before_spawn(tmp_path):
     osd = tmp_path / "osd.txt"
     clk = _Clock()
     ve = ViewEncoder(_vcfg(osd_file=str(osd)), clock=clk, sleep=clk.sleep)
+    seen = {}
 
     def popen(cmd, **kw):
-        assert "-vf" in cmd                      # OSD enabled -> drawtext filter in argv
-        ve._stop.set()
+        ve._stop.set()                       # stop FIRST: a failed assert must not hang the loop
+        seen["vf"] = "-vf" in cmd
         return _FakeEnc()
     ve._popen = popen
     ve._supervise()
-    assert osd.read_text(encoding="utf-8") == "—"   # file exists before ffmpeg opens it
+    assert seen["vf"] is True                # drawtext filter present when OSD enabled
+    assert osd.read_text(encoding="utf-8") == "—"   # textfile exists before ffmpeg opens it
 
 
 def test_osd_disabled_is_noop_and_no_vf(tmp_path):
