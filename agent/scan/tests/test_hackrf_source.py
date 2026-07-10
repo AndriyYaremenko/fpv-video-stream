@@ -32,3 +32,66 @@ def test_ring_clear_flushes_pending():
     r.clear()
     assert r.pending() == 0
     assert r.read(1, timeout_s=0.05) is None
+
+
+from hackrf_source import HackrfSource
+
+
+class _FakeRadio:
+    def __init__(self):
+        self.freqs = []
+        self.sink = None
+        self.fs = None
+        self.closed = False
+
+    def start_rx(self, sink, sample_rate_hz):
+        self.sink = sink
+        self.fs = sample_rate_hz
+
+    def set_freq(self, hz):
+        self.freqs.append(hz)
+
+    def close(self):
+        self.closed = True
+
+
+def _source(radios):
+    def factory():
+        r = _FakeRadio()
+        radios.append(r)
+        return r
+    return HackrfSource(factory, 1e6)
+
+
+def test_tune_opens_lazily_and_flushes_the_transient():
+    radios = []
+    s = _source(radios)
+    s.tune(5865e6)
+    assert len(radios) == 1 and radios[0].fs == 1e6
+    assert radios[0].freqs == [5865000000]
+    radios[0].sink(b"stale-air")                    # pre-retune samples
+    s.tune(5905e6)                                  # live retune: same open radio
+    assert len(radios) == 1 and radios[0].freqs == [5865000000, 5905000000]
+    assert s.read_chunk(4, timeout_s=0.05) is None  # transient flushed
+    radios[0].sink(b"good")
+    assert s.read_chunk(4, timeout_s=0.2) == b"good"
+
+
+def test_recover_reopens_and_retunes():
+    radios = []
+    s = _source(radios)
+    s.tune(5865e6)
+    s.recover()
+    assert radios[0].closed
+    assert len(radios) == 2 and radios[1].freqs == [5865000000]
+
+
+def test_close_is_idempotent_and_reopens_on_next_tune():
+    radios = []
+    s = _source(radios)
+    s.tune(5865e6)
+    s.close()
+    s.close()                                        # second close: no-op
+    assert radios[0].closed
+    s.tune(5905e6)
+    assert len(radios) == 2 and radios[1].freqs == [5905000000]
