@@ -514,3 +514,52 @@ def test_run_stream_persistent_stops_cleanly_on_stop_event():
                                 popen=lambda cmd, **kw: _FakeProc(stdout=io.BytesIO(b"")),
                                 clock=lambda: 0.0, sleep=lambda s: None)
     assert err is None
+
+
+def test_run_stream_persistent_ntsc_still_renders_288_canvas():
+    fs = 4e6
+    img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("NTSC", img, fs, frames=max(1, int(round(CHUNK_S * 30))))
+    raw = to_int8(fm_modulate(bb, fs, 2e6))
+    need = int(fs * 2 * CHUNK_S)
+    chunk = bytes((raw * (need // len(raw) + 1))[:need])
+
+    def popen(cmd, **kw):
+        return _FakeProc(stdout=io.BytesIO(chunk * 2))
+
+    cfg = _vcfg()
+    cfg.view_standard = "ntsc"        # native field height 240 != canvas: locks the 288 invariant
+    fenc = _FakeEncoder()
+    t = [0.0]
+    err = run_stream_persistent(cfg, 947.0, threading.Event(), max_s=60.0,
+                                encoder=fenc, popen=popen, clock=lambda: t[0],
+                                sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert err == "hackrf_transfer exited"
+    assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)
+
+
+def test_run_stream_persistent_times_out():
+    fs = 4e6
+    chunk = _chunk_bytes(fs)
+
+    class _EndlessP:                                 # capture never EOFs during the test...
+        reads = 0
+        def read(self, n):
+            _EndlessP.reads += 1
+            if _EndlessP.reads > 100:                # ...but dies afterwards: leaked daemon
+                return b""                           # readers must not outlive the test
+            _t.sleep(0.001)      # yield the GIL: a hot spin starves the demod thread
+            return chunk
+
+    def popen(cmd, **kw):
+        p = _FakeProc()
+        if cmd[0] == "hackrf_transfer":
+            p.stdout = _EndlessP()
+            p.poll = lambda: None
+        return p
+
+    t = [0.0]
+    err = run_stream_persistent(_vcfg(), 947.0, threading.Event(), max_s=1.0,
+                                encoder=_FakeEncoder(), popen=popen, clock=lambda: t[0],
+                                sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.05)))
+    assert err is None                               # deadline reached = clean exit
