@@ -58,3 +58,9 @@ def test_view_env_overrides():
     assert c.view_sample_rate_hz == 10_000_000.0 and c.view_max_s == 300.0
     assert c.view_width == 360 and c.view_fps == 10.0
     assert c.view_standard == "pal"                     # normalized to lowercase
+
+
+def test_view_engine_default_and_env():
+    from vconfig import load_video_config
+    assert load_video_config({}).view_engine == "persistent"
+    assert load_video_config({"VIEW_ENGINE": "Legacy"}).view_engine == "legacy"
