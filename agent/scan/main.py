@@ -276,12 +276,14 @@ def main() -> None:
                             lambda: open_hackrf_radio(cfg.lna_gain, cfg.vga_gain, cfg.amp_enable),
                             viewcfg.view_sample_rate_hz)
                         run = lambda freq, stop, max_s: stream_demod.run_stream_source(
-                            viewcfg, source, freq, stop, max_s, encoder)
+                            viewcfg, source, freq, stop, max_s, encoder,
+                            channel_of=nearest_channel)
                         reset = source.close     # release the device for the sweep; no USB re-enum per session
                     else:
                         run = lambda freq, stop, max_s: stream_demod.run_stream_persistent(
                             viewcfg, freq, stop, max_s, encoder,
-                            lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
+                            lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable,
+                            channel_of=nearest_channel)
                 else:
                     if viewcfg.view_engine != "legacy":
                         LOG.warning("view: unknown VIEW_ENGINE %r -> legacy pipeline",
