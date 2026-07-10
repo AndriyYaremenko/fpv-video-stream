@@ -109,3 +109,33 @@ def test_supervisor_survives_writer_crash_and_respawns():
     ve._supervise()
     assert calls["n"] == 2                  # crash contained, writer re-entered
     assert len(spawned) == 2 and all(e.killed for e in spawned)
+
+
+def test_supervisor_respawns_dead_encoder_with_backoff():
+    clk = _Clock()
+    slept = []
+    spawned = []
+    ve = ViewEncoder(_vcfg(), clock=clk,
+                     sleep=lambda s: (slept.append(s), clk.sleep(s)))
+
+    def popen(cmd, **kw):
+        assert cmd[0] == "ffmpeg" and "4x288" in cmd and "-g" in cmd
+        enc = _FakeEnc(rc=1)                       # dies instantly
+        spawned.append(enc)
+        if len(spawned) == 3:
+            ve._stop.set()
+        return enc
+    ve._popen = popen
+    ve._supervise()                                # run inline: deterministic
+    assert len(spawned) == 3
+    assert all(e.killed for e in spawned)
+    assert slept[:2] == [1.0, 2.0]                 # backoff between respawns
+
+
+def test_supervisor_stop_kills_child_and_exits():
+    clk = _Clock()
+    ve = ViewEncoder(_vcfg(), clock=clk, sleep=clk.sleep)
+    enc = _FakeEnc(on_write=lambda n: ve._stop.set())   # first placeholder write -> stop
+    ve._popen = lambda cmd, **kw: enc
+    ve._supervise()
+    assert enc.killed
