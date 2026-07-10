@@ -64,3 +64,14 @@ def test_view_engine_default_and_env():
     from vconfig import load_video_config
     assert load_video_config({}).view_engine == "persistent"
     assert load_video_config({"VIEW_ENGINE": "Legacy"}).view_engine == "legacy"
+
+
+def test_view_osd_config_defaults_and_env():
+    from vconfig import load_video_config
+    from osd import DEFAULT_OSD_FONT
+    c = load_video_config({})
+    assert c.view_osd_file == "/run/fpv/view-osd.txt"
+    assert c.view_osd_font == DEFAULT_OSD_FONT
+    c2 = load_video_config({"VIEW_OSD_FILE": "/tmp/x.txt", "VIEW_OSD_FONT": "/f/A.ttf"})
+    assert c2.view_osd_file == "/tmp/x.txt" and c2.view_osd_font == "/f/A.ttf"
+    assert load_video_config({"VIEW_OSD_FILE": ""}).view_osd_file == ""   # disable

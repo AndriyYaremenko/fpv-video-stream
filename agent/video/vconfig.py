@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 
+from osd import DEFAULT_OSD_FONT
+
 
 @dataclass
 class VideoConfig:
@@ -23,6 +25,8 @@ class VideoConfig:
     view_fps: float = 15.0
     view_standard: str = "auto"          # auto | pal | ntsc
     view_engine: str = "persistent"      # persistent (agent-lifetime ffmpeg) | legacy (per-session)
+    view_osd_file: str = "/run/fpv/view-osd.txt"   # reload=1 drawtext textfile; "" disables OSD
+    view_osd_font: str = DEFAULT_OSD_FONT
 
 
 def load_video_config(env=None):
@@ -64,4 +68,6 @@ def load_video_config(env=None):
         c.view_standard = env["VIEW_STANDARD"].strip().lower()
     if "VIEW_ENGINE" in env:
         c.view_engine = env["VIEW_ENGINE"].strip().lower()
+    c.view_osd_file = env.get("VIEW_OSD_FILE", c.view_osd_file)
+    c.view_osd_font = env.get("VIEW_OSD_FONT", c.view_osd_font)
     return c
