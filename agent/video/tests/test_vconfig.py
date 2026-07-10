@@ -37,3 +37,9 @@ def test_video_emit_env_overrides():
     c = load_video_config(env={"FPV_VIDEO_ENABLED": "0", "FPV_EMIT_COOLDOWN_S": "30"})
     assert c.video_enabled is False
     assert c.emit_cooldown_s == 30.0
+
+
+def test_view_engine_default_and_env():
+    from vconfig import load_video_config
+    assert load_video_config({}).view_engine == "persistent"
+    assert load_video_config({"VIEW_ENGINE": "Legacy"}).view_engine == "legacy"

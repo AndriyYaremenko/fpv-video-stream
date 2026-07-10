@@ -14,6 +14,7 @@ class VideoConfig:
     default_fs: float = 16_000_000.0
     video_enabled: bool = True
     emit_cooldown_s: float = 10.0
+    view_engine: str = "persistent"      # persistent (agent-lifetime ffmpeg) | legacy (per-session)
 
 
 def load_video_config(env=None):
@@ -40,4 +41,6 @@ def load_video_config(env=None):
         c.video_enabled = env["FPV_VIDEO_ENABLED"].strip().lower() not in ("0", "false", "no", "")
     if "FPV_EMIT_COOLDOWN_S" in env:
         c.emit_cooldown_s = float(env["FPV_EMIT_COOLDOWN_S"])
+    if "VIEW_ENGINE" in env:
+        c.view_engine = env["VIEW_ENGINE"].strip().lower()
     return c
