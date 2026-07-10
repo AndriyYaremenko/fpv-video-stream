@@ -472,3 +472,45 @@ def test_writer_loop_stats_includes_sync(caplog):
                     clock=clock)
     line = [r.getMessage() for r in caplog.records if "view stream:" in r.getMessage()][0]
     assert "line=15705" in line and "V37" in line
+
+
+from stream_demod import run_stream_persistent, VIEW_CANVAS_HEIGHT
+
+
+class _FakeEncoder:
+    def __init__(self):
+        self.frames = []
+        self.stats_fn = None
+    def submit(self, fr):
+        self.frames.append(fr)
+    def set_session_stats(self, fn):
+        self.stats_fn = fn
+
+
+def test_run_stream_persistent_submits_canvas_frames_and_spawns_no_ffmpeg():
+    fs = 4e6
+    cmds = []
+
+    def popen(cmd, **kw):
+        cmds.append(cmd[0])
+        return _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs) * 2))
+
+    fenc = _FakeEncoder()
+    t = [0.0]
+    err = run_stream_persistent(_vcfg(), 947.0, threading.Event(), max_s=60.0,
+                                encoder=fenc, popen=popen, clock=lambda: t[0],
+                                sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)))
+    assert err == "hackrf_transfer exited"           # finite stdout EOF, same as legacy
+    assert cmds == ["hackrf_transfer"]               # NO ffmpeg spawn: encoder is shared
+    assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)
+    st = fenc.stats_fn()                             # session stats got wired
+    assert set(st) == {"mailbox", "dropped_chunks", "sync"}
+
+
+def test_run_stream_persistent_stops_cleanly_on_stop_event():
+    stop = threading.Event()
+    stop.set()
+    err = run_stream_persistent(_vcfg(), 947.0, stop, max_s=60.0, encoder=_FakeEncoder(),
+                                popen=lambda cmd, **kw: _FakeProc(stdout=io.BytesIO(b"")),
+                                clock=lambda: 0.0, sleep=lambda s: None)
+    assert err is None

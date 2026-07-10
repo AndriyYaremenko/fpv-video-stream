@@ -344,3 +344,72 @@ def run_stream(vcfg, freq_mhz, stop_event, max_s, lna=40, vga=20, amp=0,
             except Exception:
                 pass
     return error
+
+
+def run_stream_persistent(vcfg, freq_mhz, stop_event, max_s, encoder,
+                          lna=40, vga=20, amp=0, popen=None, clock=None, sleep=None):
+    """Session capture->demod loop for the persistent-encoder engine.
+
+    Spawns ONLY hackrf_transfer; frames go to the long-lived ViewEncoder, which
+    owns ffmpeg/pacing/stats and survives the session (freeze during retunes,
+    black after idle). Same error-string contract as run_stream."""
+    popen = popen or subprocess.Popen
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
+    fs = vcfg.view_sample_rate_hz
+    chunk_bytes = int(fs * 2 * CHUNK_S)
+    cap = popen(build_capture_cmd(freq_mhz * 1e6, fs, lna, vga, amp),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=chunk_bytes)
+    standard = None
+    tracker = None
+    error = None
+    mailbox = ChunkMailbox()
+
+    def _reader():
+        while not stop_event.is_set():
+            try:
+                buf = cap.stdout.read(chunk_bytes)
+            except Exception:
+                return
+            if not buf or len(buf) < chunk_bytes:
+                return                               # EOF: capture died
+            mailbox.put(buf)
+
+    threading.Thread(target=_reader, daemon=True).start()
+    t_end = clock() + max_s
+    frame_budget = max(1, int(round(CHUNK_S * vcfg.view_fps)))
+    try:
+        while not stop_event.is_set() and clock() < t_end:
+            buf = mailbox.take()
+            if buf is None:
+                if cap.poll() is not None:
+                    error = "hackrf_transfer exited"
+                    break
+                sleep(0.05)
+                continue
+            iq = iq_from_int8_fast(buf)
+            if standard is None:
+                bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
+                standard = pick_standard(bb, fs, vcfg.view_standard,
+                                         vcfg.line_snr_db, vcfg.harm_snr_db)
+                tracker = SyncTracker(standard)
+                tracker.seed(bb, fs)
+                trk, mbx = tracker, mailbox
+                encoder.set_session_stats(lambda: {
+                    "mailbox": len(mbx), "dropped_chunks": mbx.dropped,
+                    "sync": trk.status()})
+                LOG.info("view stream: %s -> %dx%d canvas @%.0ffps", standard,
+                         vcfg.view_width, VIEW_CANVAS_HEIGHT, vcfg.view_fps)
+            for fr in select_frames(
+                    chunk_to_frames(iq, fs, standard, vcfg.view_width, VIEW_CANVAS_HEIGHT,
+                                    vcfg.lpf_cutoff_hz, vcfg.blank_frac,
+                                    budget=frame_budget, tracker=tracker),
+                    CHUNK_S, vcfg.view_fps):
+                encoder.submit(fr.tobytes())
+    finally:
+        try:
+            cap.kill()          # stop the reader FIRST: teardown must not inflate dropped_chunks
+            cap.wait(timeout=5)
+        except Exception:
+            pass
+    return error
