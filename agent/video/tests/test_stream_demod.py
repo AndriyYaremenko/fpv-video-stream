@@ -498,10 +498,13 @@ class _FakeEncoder:
     def __init__(self):
         self.frames = []
         self.stats_fn = None
+        self.osd_calls = []
     def submit(self, fr):
         self.frames.append(fr)
     def set_session_stats(self, fn):
         self.stats_fn = fn
+    def set_osd(self, text):
+        self.osd_calls.append(text)
 
 
 def test_run_stream_persistent_submits_canvas_frames_and_spawns_no_ffmpeg():
@@ -638,3 +641,30 @@ def test_run_stream_source_reports_tune_failure():
     err = run_stream_source(_vcfg(), _Broken([]), 947.0, threading.Event(),
                             max_s=60.0, encoder=_FakeEncoder(), clock=lambda: 0.0)
     assert "no device" in err
+
+
+def test_run_stream_persistent_sets_osd_freq_then_full():
+    fs = 4e6
+
+    def popen(cmd, **kw):
+        return _FakeProc(stdout=io.BytesIO(_chunk_bytes(fs) * 2))
+
+    fenc = _FakeEncoder()
+    t = [0.0]
+    run_stream_persistent(_vcfg(), 947.0, threading.Event(), max_s=60.0, encoder=fenc,
+                          popen=popen, clock=lambda: t[0],
+                          sleep=lambda s: t.__setitem__(0, t[0] + max(s, 0.01)),
+                          channel_of=lambda f: "F4")
+    assert fenc.osd_calls[0] == "947 MHz F4"                 # freq (+channel) at entry
+    assert "947 MHz F4 · PAL" in fenc.osd_calls              # full after standard detect
+
+
+def test_run_stream_source_sets_osd_freq_then_full():
+    fs = 4e6
+    stop = threading.Event()
+    src = _FakeSource([bytes(_chunk_bytes(fs))], stop=stop, stop_after=1)
+    fenc = _FakeEncoder()
+    run_stream_source(_vcfg(), src, 947.0, stop, max_s=60.0, encoder=fenc,
+                      clock=lambda: 0.0, channel_of=None)
+    assert fenc.osd_calls[0] == "947 MHz"                    # no channel_of -> freq only
+    assert "947 MHz · PAL" in fenc.osd_calls                 # full after standard detect
