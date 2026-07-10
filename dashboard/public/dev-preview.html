@@ -19,4 +19,13 @@
   <table class="data-table"><thead><tr><th>Час</th><th>Частота</th><th>Клас</th><th>SNR</th></tr></thead>
     <tbody><tr class="is-new"><td>12:03:20</td><td>5800 МГц</td><td style="color:var(--on)">analog</td><td>18 dB</td></tr>
     <tr><td>12:01:00</td><td>1280 МГц</td><td style="color:var(--warn)">digital</td><td>12 dB</td></tr></tbody></table>
+  <h2 class="mono">COMPONENTS (module)</h2>
+  <div id="cmp-mount" style="display:flex;flex-direction:column;gap:10px"></div>
+  <script type="module">
+    import { cornerCard, detectionCard, occupancyStrip, tempSlot, pip } from '/views/components.js';
+    const m=document.getElementById('cmp-mount');
+    m.appendChild(cornerCard(`<div class="label-caps">NODE-BLADERF</div>${pip(true)} ${tempSlot(63.5)}`));
+    m.appendChild(detectionCard({band:'5.8G',center_mhz:5800,class:'analog',channel:'F4',snr_db:18},true));
+    m.appendChild(occupancyStrip({'5.8G':{},'900M':{}},{'5.8G':0.32,'900M':0.5}));
+  </script>
 </body></html>
