@@ -27,11 +27,14 @@ def build_capture_cmd(freq_hz, sample_rate_hz, lna=40, vga=20, amp=0):
 
 
 def build_encode_cmd(push_url, width, height, fps):
-    """ffmpeg argv: raw gray frames on stdin -> low-latency H.264 RTSP push."""
+    """ffmpeg argv: raw gray frames on stdin -> low-latency H.264 RTSP push.
+    -g fps = an IDR every ~1 s so a WHEP viewer joining mid-stream decodes
+    within a second (libx264's default 250-frame GOP is ~17 s at 15 fps)."""
     return ["ffmpeg", "-hide_banner", "-loglevel", "error",
             "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{width}x{height}",
             "-r", str(fps), "-i", "-",
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-g", str(max(1, int(round(fps)))),
             "-pix_fmt", "yuv420p", "-f", "rtsp", "-rtsp_transport", "tcp", push_url]
 
 

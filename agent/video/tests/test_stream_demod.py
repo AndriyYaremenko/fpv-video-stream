@@ -21,6 +21,15 @@ def test_encode_cmd_rawgray_to_rtsp():
     assert "zerolatency" in cmd and "rtsp" in cmd and "yuv420p" in cmd
 
 
+def test_encode_cmd_short_gop():
+    # libx264 defaults to keyint=250 (~17 s at 15 fps): a WHEP viewer joining
+    # mid-GOP waits that long for an IDR. -g fps = a keyframe every ~1 s.
+    cmd = build_encode_cmd("rtsp://u:p@10.8.0.1:8554/hackrf-view", 480, 288, 15)
+    assert cmd[cmd.index("-g") + 1] == "15"
+    cmd = build_encode_cmd("rtsp://u:p@h:8554/s", 480, 288, 12.6)
+    assert cmd[cmd.index("-g") + 1] == "13"
+
+
 def test_pick_standard_forced_and_noise_fallback():
     noise = np.random.default_rng(1).normal(0, 1, 200_000)
     assert pick_standard(noise, 8e6, forced="ntsc") == "NTSC"
