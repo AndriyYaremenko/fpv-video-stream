@@ -66,7 +66,10 @@ class ViewEncoder:
                 LOG.exception("view encoder spawn failed")
             if enc is not None:
                 t0 = self._clock()
-                self._run_writer(enc)
+                try:
+                    self._run_writer(enc)
+                except Exception:
+                    LOG.exception("view writer crashed; treating as encoder death")
                 try:
                     enc.kill()
                     enc.wait(timeout=5)
@@ -103,7 +106,8 @@ class ViewEncoder:
                 return
             now = self._clock()
             if now - last_log >= self._log_every_s:
-                st = self._stats() if self._stats is not None else None
+                st_fn = self._stats
+                st = st_fn() if st_fn is not None else None
                 sync = ""
                 if st and st.get("sync"):
                     s = st["sync"]

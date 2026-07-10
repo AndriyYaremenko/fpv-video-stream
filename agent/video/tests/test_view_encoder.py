@@ -91,3 +91,21 @@ def test_writer_returns_when_encoder_dies():
     enc = _FakeEnc(rc=1)                                  # dead from the start
     ve._run_writer(enc)                                   # must return, not hang
     assert enc.writes == []
+
+
+def test_supervisor_survives_writer_crash_and_respawns():
+    clk = _Clock()
+    ve = ViewEncoder(_vcfg(), clock=clk, sleep=clk.sleep)
+    spawned = []
+    calls = {"n": 0}
+
+    def crashing_writer(enc):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")      # e.g. a stats-fn race
+        ve._stop.set()
+    ve._run_writer = crashing_writer
+    ve._popen = lambda cmd, **kw: (spawned.append(_FakeEnc()) or spawned[-1])
+    ve._supervise()
+    assert calls["n"] == 2                  # crash contained, writer re-entered
+    assert len(spawned) == 2 and all(e.killed for e in spawned)
