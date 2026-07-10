@@ -109,8 +109,8 @@ a{color:var(--aux);}
 
 /* node card (management + bottom strip) */
 .node-card{position:relative;background:var(--panel);border:1px solid var(--line);padding:12px;}
-.node-card .nc-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;}
-.node-card .nc-title{font-weight:600;}
+.nc-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;}
+.nc-title{font-weight:600;}
 .node-card .nc-sub{color:var(--muted);font-size:11px;font-family:var(--mono);}
 .nc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-family:var(--mono);font-size:12px;}
 .nc-grid .k{color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase;display:block;}

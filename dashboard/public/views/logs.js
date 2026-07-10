@@ -1,7 +1,11 @@
-// dashboard/public/views/logs.js — detection history + live spectrum + recovered frames.
+// dashboard/public/views/logs.js — detection history (cached; no refetch on data ticks) +
+// live spectrum (selected band persisted across re-renders) + recovered frames.
 import { el, escapeHtml } from '/views/components.js';
 import { classColor, fmtFreq, renderMiniSpectrum, frameCaption } from '/spectrum.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
+
+let selectedBand = null;   // persisted across re-renders so data ticks don't reset the picker
+let historyCache = null;   // fetched once (on mount or via the refresh button), not on every tick
 
 function historyTable(rows){
   if (!rows.length) return el('p','muted','Журнал порожній.');
@@ -21,8 +25,16 @@ export function render(container, ctx){
   container.className='screen';
   container.innerHTML='';
   const layout=el('div','logs');
-  const main=el('div','logs-main'); main.appendChild(el('div','label-caps','ІСТОРІЯ ДЕТЕКЦІЙ'));
-  const tableSlot=el('div',null,'<p class="muted">Завантаження…</p>'); main.appendChild(tableSlot);
+
+  const main=el('div','logs-main');
+  const head=el('div',null,'<span class="label-caps">ІСТОРІЯ ДЕТЕКЦІЙ</span> <button type="button" class="btn" id="logs-refresh" style="padding:3px 9px;font-size:11px;">оновити</button>');
+  main.appendChild(head);
+  const tableSlot=el('div',null, historyCache ? '' : '<p class="muted">Завантаження…</p>');
+  if (historyCache) tableSlot.appendChild(historyTable(historyCache));
+  main.appendChild(tableSlot);
+  head.querySelector('#logs-refresh').addEventListener('click', () => {
+    historyCache = null; ctx.getDetections().then(rows => { historyCache = rows; ctx.requestRender(); });
+  });
 
   const side=el('div','logs-side');
   const scanners=ctx.scanners(); const store=ctx.scanStore();
@@ -30,15 +42,19 @@ export function render(container, ctx){
   const bands=live?Object.keys(live.bands||{}):[];
   side.appendChild(el('div','label-caps','LIVE SPECTRUM'));
   if (live && bands.length){
-    let band=bands.find(b=>b==='5.8G')||bands[0];
+    if (!bands.includes(selectedBand)) selectedBand = bands.find(b=>b==='5.8G')||bands[0];
     const picker=el('div','rx5808-ctl');
-    for (const b of bands){ const btn=el('button',`rx-mode${b===band?' active':''}`,b); btn.addEventListener('click',()=>{band=b;draw();for(const x of picker.children)x.classList.toggle('active',x.textContent===b);}); picker.appendChild(btn); }
+    for (const b of bands){
+      const btn=el('button',`rx-mode${b===selectedBand?' active':''}`,b);
+      btn.addEventListener('click',()=>{ selectedBand=b; draw(); for(const x of picker.children)x.classList.toggle('active',x.textContent===b); });
+      picker.appendChild(btn);
+    }
     side.appendChild(picker);
     const canvas=document.createElement('canvas'); canvas.width=300; canvas.height=60; canvas.className='mini-spectrum'; side.appendChild(canvas);
-    function draw(){ const range=live.bands[band]||{}; const psd=(live.latestPsd&&live.latestPsd[band])||[];
-      const dets=(live.detection?.detections||[]).filter(d=>d.band===band); const rxFreq=live.rxtune?.freq_mhz??null;
+    function draw(){ const range=live.bands[selectedBand]||{}; const psd=(live.latestPsd&&live.latestPsd[selectedBand])||[];
+      const dets=(live.detection?.detections||[]).filter(d=>d.band===selectedBand); const rxFreq=live.rxtune?.freq_mhz??null;
       renderMiniSpectrum(canvas,{psd,range,dets,rxFreq,tunable:range.low_mhz!=null}); }
-    canvas.addEventListener('click',(e)=>{ const range=live.bands[band]||{}; if(range.low_mhz==null)return;
+    canvas.addEventListener('click',(e)=>{ const range=live.bands[selectedBand]||{}; if(range.low_mhz==null)return;
       const r=canvas.getBoundingClientRect(); const x=Math.min(r.width,Math.max(0,e.clientX-r.left));
       const freq=range.low_mhz+(x/r.width)*(range.high_mhz-range.low_mhz); const ch=nearestRxChannel(freq);
       if(ch) ctx.onScanClick(sid,{mode:'manual',channel:ch.name}); });
@@ -46,8 +62,7 @@ export function render(container, ctx){
   } else side.appendChild(el('p','muted','Немає активного сканера.'));
 
   side.appendChild(el('div','label-caps','ВІДНОВЛЕНІ КАДРИ'));
-  const frames=el('div','frames-grid');
-  let any=false;
+  const frames=el('div','frames-grid'); let any=false;
   for (const s of scanners){ const v=store[s.id]?.video; if (v&&v.frame_png_b64){ any=true;
     const img=document.createElement('img'); img.src=`data:image/png;base64,${v.frame_png_b64}`; img.alt='frame';
     img.addEventListener('click',()=>ctx.handlers.openImage(img.src,frameCaption(v))); frames.appendChild(img);} }
@@ -55,5 +70,6 @@ export function render(container, ctx){
   side.appendChild(frames);
 
   layout.appendChild(main); layout.appendChild(side); container.appendChild(layout);
-  ctx.getDetections().then(rows => { tableSlot.innerHTML=''; tableSlot.appendChild(historyTable(rows)); });
+
+  if (!historyCache) ctx.getDetections().then(rows => { historyCache = rows; tableSlot.innerHTML=''; tableSlot.appendChild(historyTable(rows)); });
 }
