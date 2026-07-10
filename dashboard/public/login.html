@@ -6,18 +6,19 @@
   <title>FPV — Вхід</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body class="login-page">
-  <form class="login-card" method="POST" action="/login">
-    <h1>FPV Відеоспостереження</h1>
-    <input name="user" placeholder="Логін" autocomplete="username" required />
-    <input name="pass" type="password" placeholder="Пароль" autocomplete="current-password" required />
-    <button type="submit">Увійти</button>
-    <p class="err" id="err"></p>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
+  <form class="card2" method="POST" action="/login" style="width:min(360px,92vw);border:2px solid var(--line);">
+    <div class="brand" style="font-size:18px;margin-bottom:4px;">FPV<small>SDR MONITOR · ВХІД</small></div>
+    <p class="form-err" id="err"></p>
+    <div class="form">
+      <label>Користувач<input name="user" autocomplete="username" required autofocus /></label>
+      <label>Пароль<input name="pass" type="password" autocomplete="current-password" required /></label>
+      <div class="form-actions"><button type="submit" class="btn btn-primary" style="width:100%;">Увійти</button></div>
+    </div>
   </form>
   <script>
-    if (new URLSearchParams(location.search).has('error')) {
+    if (new URLSearchParams(location.search).has('error'))
       document.getElementById('err').textContent = 'Невірний логін або пароль';
-    }
   </script>
 </body>
 </html>
