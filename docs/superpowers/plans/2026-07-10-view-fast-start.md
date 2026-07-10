@@ -956,36 +956,41 @@ function syncViewerPlayer(store, viewerId, view) {
     viewerPlayer = null;
     viewerStreamKey = want;
     if (viewerRetry.timer) clearTimeout(viewerRetry.timer);
-    viewerRetry = { timer: null, inflight: false };
+    viewerRetry = { timer: null, inflight: false };   // new generation: stale chains go inert
     if (!want) { video.srcObject = null; return; }
-    startViewerWhep(video, viewStream(store, viewerId), want, 0);
+    startViewerWhep(video, viewStream(store, viewerId), viewerRetry, 0);
     return;
   }
   // Same key, but the player died (encoder respawn, server restart) and the
   // retries gave up — any view-state tick re-kicks the connection.
   if (want && !viewerPlayer && !viewerRetry.timer && !viewerRetry.inflight) {
-    startViewerWhep(video, viewStream(store, viewerId), want, 0);
+    startViewerWhep(video, viewStream(store, viewerId), viewerRetry, 0);
   }
 }
 
-async function startViewerWhep(video, stream, key, attempt) {
-  if (viewerStreamKey !== key || attempt > 40) { viewerRetry.inflight = false; return; }
-  viewerRetry.inflight = true;
+// `retry` is this attempt-chain's generation token: minted by syncViewerPlayer,
+// mutated ONLY by its own chain, dead the moment a new generation replaces it.
+async function startViewerWhep(video, stream, retry, attempt) {
+  if (viewerRetry !== retry || attempt > 40) return;
+  retry.inflight = true;
   try {
     const p = await startWhep(video, `${cfg.webrtcBase}/${stream}/whep`, cfg.readUser, cfg.readPass,
       () => { if (viewerPlayer && viewerPlayer.player === p) { p.close(); viewerPlayer = null; } });
-    if (viewerStreamKey !== key) { p.close(); viewerRetry.inflight = false; return; }
+    retry.inflight = false;
+    if (viewerRetry !== retry || viewerPlayer) { p.close(); return; }  // superseded or a sibling won
     viewerPlayer = { player: p };
-    viewerRetry.inflight = false;
   } catch {
-    viewerRetry.timer = setTimeout(() => {
-      viewerRetry.timer = null;
-      viewerRetry.inflight = false;
-      startViewerWhep(video, stream, key, attempt + 1);
+    retry.inflight = false;
+    if (viewerRetry !== retry) return;                 // superseded: stay inert
+    retry.timer = setTimeout(() => {
+      retry.timer = null;
+      startViewerWhep(video, stream, retry, attempt + 1);
     }, whepRetryDelay(attempt));
   }
 }
 ```
+
+Note: hardened during execution (da882dc) — the retry object is a per-generation token passed into startViewerWhep, continuations never touch the module-level viewerRetry.
 
 - [ ] **Step 6: Run the full JS suite**
 

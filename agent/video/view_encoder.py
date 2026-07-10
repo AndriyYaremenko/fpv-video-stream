@@ -108,16 +108,17 @@ class ViewEncoder:
             if now - last_log >= self._log_every_s:
                 st_fn = self._stats
                 st = st_fn() if st_fn is not None else None
-                sync = ""
-                if st and st.get("sync"):
-                    s = st["sync"]
-                    vrow = s["vsync_row"] if s["vsync_row"] is not None else "-"
-                    sync = (" sync=H%.2f V%s line=%.0fHz"
-                            % (s["line_hz"] / s["nominal"] - 1.0, vrow, s["line_hz"]))
-                LOG.info("view stream: %.1f fps, queue=%d, mailbox=%d, dropped_frames=%d, "
-                         "dropped_chunks=%d, repeats=%d%s",
-                         (written - last_written) / max(now - last_log, 1e-9), len(self._q),
-                         st["mailbox"] if st else 0, self._q.dropped,
-                         st["dropped_chunks"] if st else 0, self.repeats, sync)
+                if st is not None:
+                    sync = ""
+                    if st.get("sync"):
+                        s = st["sync"]
+                        vrow = s["vsync_row"] if s["vsync_row"] is not None else "-"
+                        sync = (" sync=H%.2f V%s line=%.0fHz"
+                                % (s["line_hz"] / s["nominal"] - 1.0, vrow, s["line_hz"]))
+                    LOG.info("view stream: %.1f fps, queue=%d, mailbox=%d, dropped_frames=%d, "
+                             "dropped_chunks=%d, repeats=%d%s",
+                             (written - last_written) / max(now - last_log, 1e-9), len(self._q),
+                             st["mailbox"], self._q.dropped,
+                             st["dropped_chunks"], self.repeats, sync)
                 last_log = now
                 last_written = written
