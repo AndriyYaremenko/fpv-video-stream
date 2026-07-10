@@ -144,3 +144,9 @@ export function viewerListHtml(rows, nowS, activeFreq = null, canView = true) {
     <thead><tr><th></th><th>Частота</th><th>Бенд</th><th>Клас</th><th>SNR</th><th>Джерело</th><th>Коли</th></tr></thead>
     <tbody>${body}</tbody></table>`;
 }
+
+// WHEP (re)connect backoff: the RTSP path (re)appears within a couple of
+// seconds of a view command, so retry quickly at first, then settle to 1.5 s.
+export function whepRetryDelay(attempt) {
+  return Math.min(1500, 300 * 2 ** attempt);
+}
