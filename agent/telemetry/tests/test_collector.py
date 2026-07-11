@@ -16,7 +16,7 @@ def test_parse_meminfo():
     text = "MemTotal:        4096000 kB\nMemFree: 100000 kB\nMemAvailable:    3096000 kB\n"
     out = parse_meminfo(text)
     assert out["mem_total_mb"] == 4000
-    assert out["mem_used_mb"] == 976          # (4096000-3096000)/1024 rounded
+    assert out["mem_used_mb"] == 977          # (4096000-3096000)/1024 = 976.56 -> round -> 977
     assert out["mem_used_pct"] == 24
     assert parse_meminfo("nonsense") is None
 

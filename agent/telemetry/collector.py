@@ -42,7 +42,7 @@ def parse_meminfo(text):
     used_kb = max(0, total - avail)
     return {
         "mem_total_mb": round(total / 1024),
-        "mem_used_mb": int(used_kb / 1024),
+        "mem_used_mb": round(used_kb / 1024),
         "mem_used_pct": round(100 * used_kb / total),
     }
 
