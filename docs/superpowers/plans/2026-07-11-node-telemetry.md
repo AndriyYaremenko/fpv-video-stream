@@ -4,7 +4,7 @@
 
 **Goal:** Publish real host health (CPU temp, RAM, throttle, load, uptime, disk) from the Pi that carries the SDRs and show it on the dashboard, grouped as one node.
 
-**Architecture:** A new standalone `fpv-telemetry` Python service on the Pi reads `/proc`+`/sys`+`vcgencmd` and publishes `fpv/bladerf/telemetry` (retained, ~15 s) reusing the bladerf MQTT pub creds. The dashboard's MQTT subscriber reduces it into `store["bladerf"].telemetry`; `views/nodes.js` groups the radios (hackrf/hackrf-view/bladerf) under one node header showing the health, and `views/dashboard.js`'s node-strip shows each node once.
+**Architecture:** A new standalone `fpv-telemetry` Python service on the Pi reads `/proc`+`/sys`+`vcgencmd` and publishes `fpv/bladerf/telemetry` (retained, ~15 s) reusing the scan agent's MQTT pub creds (broker user `pub`; `bladerf` is the node-id/topic, not a username). The dashboard's MQTT subscriber reduces it into `store["bladerf"].telemetry`; `views/nodes.js` groups the radios (hackrf/hackrf-view/bladerf) under one node header showing the health, and `views/dashboard.js`'s node-strip shows each node once.
 
 **Tech Stack:** Python 3 (stdlib + paho-mqtt) on the Pi; systemd; vanilla ES-module dashboard (`node --test`); Docker Compose deploy.
 
@@ -532,8 +532,9 @@ Type=simple
 WorkingDirectory=/opt/fpv-video-stream/agent/telemetry
 Environment=TELEM_NODE_ID=bladerf
 Environment=TELEM_MQTT_HOST=10.8.0.1
-# Publish creds (MQTT_PUB_USER=bladerf, MQTT_PUB_PASS=<bladerf publish pass>) are secret —
-# put them in /etc/fpv-telemetry.env (not committed). The '-' lets the unit start if absent.
+# Publish creds are secret — /etc/fpv-telemetry.env with MQTT_PUB_USER=pub (the ONLY publish user
+# in the mosquitto ACL; `bladerf` is the node-id/topic, NOT a username) + MQTT_PUB_PASS=<pub pass>.
+# The '-' lets the unit start if absent.
 EnvironmentFile=-/etc/fpv-telemetry.env
 ExecStart=/opt/fpv-video-stream/agent/telemetry/.venv/bin/python -u main.py
 Restart=always
@@ -1011,7 +1012,7 @@ Not a TDD task; performed by the operator/controller once the plan is implemente
 1. `git -C /opt/fpv-video-stream pull --ff-only`
 2. Create the venv + deps (does NOT touch the scan venv):
    `python3 -m venv /opt/fpv-video-stream/agent/telemetry/.venv && /opt/fpv-video-stream/agent/telemetry/.venv/bin/pip install -r /opt/fpv-video-stream/agent/telemetry/requirements.txt`
-3. Write `/etc/fpv-telemetry.env` with `MQTT_PUB_USER=bladerf` and `MQTT_PUB_PASS=<bladerf publish pass>` (from devices.yml / the existing scan env).
+3. Write `/etc/fpv-telemetry.env` with `MQTT_PUB_USER=pub` and `MQTT_PUB_PASS=<pub pass>` — the SAME broker publish user the scan agent uses (`pub` is the only publish user in the mosquitto ACL; `bladerf` is the node-id/topic segment, NOT a username). Copy the pass from the Pi's existing `/etc/fpv-scan.env`.
 4. Install + start: `sudo cp systemd/fpv-telemetry.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now fpv-telemetry`
 5. Verify: `journalctl -u fpv-telemetry -n 20` shows the publish log; `mosquitto_sub -h 10.8.0.1 -u <read> -P <pass> -t 'fpv/bladerf/telemetry' -C 1` prints a payload; `systemctl is-active fpv-scan fpv-scan-hackrf` still `active` (untouched).
 

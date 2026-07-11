@@ -24,7 +24,16 @@ def main():
     logging.basicConfig(level=logging.INFO)
     cfg = load_env()
     pub = TelemetryPublisher(cfg["host"], cfg["port"], cfg["user"], cfg["password"], cfg["node_id"])
-    pub.connect()
+    # Retry the initial connect: over WireGuard the broker may not be reachable the instant the unit
+    # starts at boot. paho auto-reconnects once the first connect succeeds, so we only guard connect().
+    while True:
+        try:
+            pub.connect()
+            break
+        except Exception:
+            LOG.warning("MQTT connect to %s:%s failed; retry in %ss",
+                        cfg["host"], cfg["port"], cfg["interval_s"], exc_info=True)
+            time.sleep(cfg["interval_s"])
     LOG.info("fpv-telemetry -> fpv/%s/telemetry every %ss", cfg["node_id"], cfg["interval_s"])
     try:
         while True:

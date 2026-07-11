@@ -14,8 +14,9 @@ host property published once per node and the dashboard groups the radios under 
 1. **Node model:** an optional `node:` key on each device in `devices.yml` groups radios under one
    physical host. The **node-id = `bladerf`** (reuse an existing scanner id — no new MQTT identity).
 2. **Metrics:** CPU temp, RAM (used/total/%), throttle+undervoltage flags, CPU load, host uptime, disk.
-3. **Publisher:** a new standalone `fpv-telemetry` systemd service on the Pi that **reuses the bladerf
-   MQTT pub credentials** and publishes `fpv/bladerf/telemetry` retained every ~15 s. Standalone (not
+3. **Publisher:** a new standalone `fpv-telemetry` systemd service on the Pi that **reuses the scan
+   agent's MQTT publish credentials** (broker user `pub` — `bladerf` is the node-id/topic segment, not
+   a username) and publishes `fpv/bladerf/telemetry` retained every ~15 s. Standalone (not
    folded into the scan agent) so host health is reported even when a scan agent has crashed — which is
    exactly when it matters. **No mosquitto ACL / broker restart** needed.
 4. **Display:** the **Вузли** screen groups by node — a node header with the health readout, its radio

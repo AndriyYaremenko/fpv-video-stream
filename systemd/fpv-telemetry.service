@@ -8,8 +8,10 @@ Type=simple
 WorkingDirectory=/opt/fpv-video-stream/agent/telemetry
 Environment=TELEM_NODE_ID=bladerf
 Environment=TELEM_MQTT_HOST=10.8.0.1
-# Publish creds (MQTT_PUB_USER=bladerf, MQTT_PUB_PASS=<bladerf publish pass>) are secret —
-# put them in /etc/fpv-telemetry.env (not committed). The '-' lets the unit start if absent.
+# Publish creds are secret — put them in /etc/fpv-telemetry.env (not committed). Use the SAME
+# broker user the scan agent uses: MQTT_PUB_USER=pub (the ONLY publish user in the mosquitto ACL;
+# `bladerf` is the node-id/topic, NOT a username), MQTT_PUB_PASS=<pub pass, from /etc/fpv-scan.env>.
+# The '-' lets the unit start if the file is absent.
 EnvironmentFile=-/etc/fpv-telemetry.env
 ExecStart=/opt/fpv-video-stream/agent/telemetry/.venv/bin/python -u main.py
 Restart=always
