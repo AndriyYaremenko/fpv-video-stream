@@ -189,7 +189,7 @@ a{color:var(--aux);}
   .app{grid-template-columns:1fr;}
   .sidebar{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;}
   .sidebar .spacer{display:none;}
-  .dash,.logs{grid-template-columns:1fr;}
+  .dash{grid-template-columns:1fr;}
 }
 
 /* ---- FPV Viewer screen ---- */
@@ -205,6 +205,15 @@ a{color:var(--aux);}
 .view-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .view-controls input{width:120px;padding:5px 7px;background:#0d0d0d;border:1px solid var(--line);color:var(--text);font-family:var(--mono);}
 .view-badge{font-family:var(--mono);font-size:11px;color:var(--aux);} .view-err{color:var(--threat);font-size:11px;font-family:var(--mono);}
+/* FPV Viewer on a phone: the desktop `360px 1fr` grid squeezes the 1fr stage to 0 (the fixed 360px
+   list eats the whole width) → the player vanished. This block MUST come AFTER the .viewer base rules
+   above (equal specificity → later source wins) or it won't take effect. Stack to one column, put the
+   stage (player) on top — the point of this screen — and cap the list so it doesn't push it off. */
+@media(max-width:900px){
+  .viewer{grid-template-columns:1fr;}
+  .viewer-stage{order:-1;}
+  .viewer-list{max-height:50vh;}
+}
 /* ---- Frames gallery screen ---- */
 .frames-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:var(--gutter);border-bottom:1px solid var(--line);}
 .frames-toolbar select,.frames-toolbar input{background:#0d0d0d;border:1px solid var(--line);color:var(--text);padding:5px 7px;font-family:var(--mono);font-size:12px;}
