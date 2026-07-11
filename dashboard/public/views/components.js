@@ -5,7 +5,6 @@ export function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp
 export function el(tag,cls,html){const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;}
 export function fmtBitrate(k){return k==null?'—':k>=1000?`${(k/1000).toFixed(1)} Mbps`:`${k} kbps`;}
 export function fmtUptime(s){if(s==null)return '—';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h?`${h}год ${m}хв`:`${m}хв`;}
-export function telemetryLine(t){const p=[];if(!t)return '';if(t.rssi!=null)p.push(`RSSI ${t.rssi}`);if(t.freq!=null)p.push(String(t.freq));if(t.alarm)p.push('⚠ ALARM');return p.join(' · ');}
 export function tempSlot(c){if(c==null)return '<span class="mono">—°C</span>';const cls=c>=75?'temp-hot':c>=60?'temp-warm':'';return `<span class="mono ${cls}">${c.toFixed(1)}°C</span>`;}
 export function pip(online){return `<span class="pip ${online?'on':'off'}">${online?'ONLINE':'OFFLINE'}</span>`;}
 export function cornerCard(innerHtml){const c=el('div','card corner',innerHtml);c.insertAdjacentHTML('beforeend','<span class="cm-bl"></span><span class="cm-br"></span>');return c;}
