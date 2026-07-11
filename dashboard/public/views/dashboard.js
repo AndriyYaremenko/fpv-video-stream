@@ -4,7 +4,7 @@
 // v2 note: the FULL merged detection list now lives on the separate FPV Viewer screen
 // (views/viewer.js); this screen only shows a lightweight count + top few, so it stays scannable
 // alongside the feeds grid. d.telemetry is a dead field (never populated upstream) — not rendered.
-import { el, pip, cornerCard, occupancyStrip, detectionCard, fmtBitrate, fmtUptime, tempSlot, escapeHtml } from '/views/components.js';
+import { el, pip, cornerCard, detectionCard, fmtBitrate, fmtUptime, escapeHtml, nodeHealth } from '/views/components.js';
 import { detectionKey } from '/alert.js';
 import { frameCaption } from '/spectrum.js';
 
@@ -98,15 +98,23 @@ export function render(container, ctx){
     }
   }
 
-  // --- node telemetry strip (rebuilt each render) ---
+  // --- node health strip (rebuilt each render; one entry per physical node + node-less devices) ---
   strip.innerHTML = '';
-  for (const d of ctx.devices()){
-    const live = store[d.id]; const isScanner = d.kind === 'scanner';
-    const online = isScanner ? !!(live && live.online) : d.online;
-    const card = cornerCard(`<div class="nc-head"><span class="nc-title">${escapeHtml(d.name)}</span>${pip(online)}</div>
-      <div class="nc-grid"><div><span class="k">TEMP</span>${tempSlot(null)}</div>
-        <div><span class="k">UPTIME</span><span class="mono">${fmtUptime(d.uptimeSec)}</span></div></div>`);
-    if (isScanner && live) card.appendChild(occupancyStrip(live.bands, live.detection?.occupancy||{}));
-    strip.appendChild(card);
+  const nowS = Math.floor(Date.now() / 1000);
+  const seenNodes = new Set();
+  for (const d of ctx.devices()) {
+    if (d.node) {
+      if (seenNodes.has(d.node)) continue;   // one card per node
+      seenNodes.add(d.node);
+      const online = !!(store[d.node] && store[d.node].online);
+      const card = cornerCard(`<div class="nc-head"><span class="nc-title">ВУЗОЛ · ${escapeHtml(d.node)}</span>${pip(online)}</div>`);
+      card.appendChild(nodeHealth(store[d.node] && store[d.node].telemetry, nowS));
+      strip.appendChild(card);
+    } else {
+      const online = d.online;
+      const card = cornerCard(`<div class="nc-head"><span class="nc-title">${escapeHtml(d.name)}</span>${pip(online)}</div>
+        <div class="nc-grid"><div><span class="k">UPTIME</span><span class="mono">${fmtUptime(d.uptimeSec)}</span></div></div>`);
+      strip.appendChild(card);
+    }
   }
 }
