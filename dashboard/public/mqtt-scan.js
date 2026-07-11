@@ -21,7 +21,7 @@ export function buildViewCommand(action, freqMhz) {
 
 function ensure(store, id) {
   if (!store[id]) {
-    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, bands: {}, latestPsd: {}, waterfalls: {} };
+    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, bands: {}, latestPsd: {}, waterfalls: {} };
   }
   return store[id];
 }
@@ -30,7 +30,7 @@ function ensure(store, id) {
 // payload may be a JSON string or an already-parsed object. Pure + safe on bad input.
 export function reduce(store, topic, payload, opts = {}) {
   const depth = opts.depth || DEFAULT_DEPTH;
-  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view)$/.exec(topic || '');
+  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry)$/.exec(topic || '');
   if (!m) return store;
   const [, id, kind] = m;
   let data;
@@ -68,6 +68,20 @@ export function reduce(store, topic, payload, opts = {}) {
       error: data.error || null,
       stream: data.stream || null,
     };
+  } else if (kind === 'telemetry') {
+    s.telemetry = {
+      ts: data.ts || 0,
+      cpu_temp_c: data.cpu_temp_c ?? null,
+      cpu_load_pct: data.cpu_load_pct ?? null,
+      mem_used_mb: data.mem_used_mb ?? null,
+      mem_total_mb: data.mem_total_mb ?? null,
+      mem_used_pct: data.mem_used_pct ?? null,
+      disk_used_pct: data.disk_used_pct ?? null,
+      uptime_s: data.uptime_s ?? null,
+      throttled: data.throttled ?? null,
+      throttled_ever: data.throttled_ever ?? null,
+      throttle_flags: data.throttle_flags ?? null,
+    };
   } else if (kind === 'spectrum') {
     for (const b of (data.bands || [])) {
       if (!b || b.id == null) continue;
@@ -96,7 +110,7 @@ export class MqttScanClient {
     const client = window.mqtt.connect(url, { username: user, password: pass, reconnectPeriod: 4000 });
     let raf = 0;
     const notify = () => { raf = 0; onChange(this.store); };
-    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view']));
+    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry']));
     client.on('message', (topic, buf) => {
       try { reduce(this.store, topic, buf.toString(), { depth: this.depth }); } catch { return; }
       if (!raf) raf = requestAnimationFrame(notify);

@@ -99,3 +99,23 @@ test('buildViewCommand: start carries freq, stop does not', () => {
   assert.deepEqual(buildViewCommand('start', 5865), { view: 'start', freq_mhz: 5865 });
   assert.deepEqual(buildViewCommand('stop'), { view: 'stop' });
 });
+
+test('telemetry message reduces into store[id].telemetry', () => {
+  const store = {};
+  reduce(store, 'fpv/bladerf/telemetry', JSON.stringify({
+    node_id: 'bladerf', ts: 1752200000, cpu_temp_c: 62.4, cpu_load_pct: 38,
+    mem_used_mb: 1200, mem_total_mb: 4096, mem_used_pct: 29, disk_used_pct: 47,
+    uptime_s: 123456, throttled: false, throttled_ever: true, throttle_flags: '0x50000',
+  }));
+  const t = store.bladerf.telemetry;
+  assert.equal(t.cpu_temp_c, 62.4);
+  assert.equal(t.mem_used_pct, 29);
+  assert.equal(t.throttled_ever, true);
+  assert.equal(t.throttle_flags, '0x50000');
+});
+
+test('telemetry reduce ignores malformed payload', () => {
+  const store = {};
+  reduce(store, 'fpv/bladerf/telemetry', 'not json');
+  assert.equal(store.bladerf === undefined || store.bladerf.telemetry === null, true);
+});
