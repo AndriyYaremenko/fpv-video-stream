@@ -52,3 +52,13 @@ test('mergeStatus passes through kind, defaulting missing to camera', () => {
   assert.equal(out.find((d) => d.id === 'pi-01').kind, 'camera');
   assert.equal(out.find((d) => d.id === 'scan-01').kind, 'scanner');
 });
+
+test('mergeStatus passes through node grouping id, null when absent', () => {
+  const r = { devices: [
+    { id: 'bladerf', name: 'B', location: 'z', kind: 'scanner', node: 'bladerf' },
+    { id: 'pi-01', name: 'A', location: 'x' },
+  ] };
+  const out = mergeStatus(r, pathsList, now);
+  assert.equal(out.find((d) => d.id === 'bladerf').node, 'bladerf');
+  assert.equal(out.find((d) => d.id === 'pi-01').node, null);
+});
