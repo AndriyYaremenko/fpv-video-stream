@@ -183,10 +183,13 @@ ctx.handlers = {
   // Tear down a tile's player (on offline / removal). Safe to call when none exists.
   closeTile: (id) => { const st = players.get(id); if (st && st.player) st.player.close(); players.delete(id); },
   // Restart a tile's live playback: close, clear the <video>, let the next reconcile re-establish it.
+  // renderLive (not renderActive) so restart-all from a non-live screen (e.g. Кадри with un-applied
+  // filter typing) doesn't force a full re-mount that would wipe it; the tile only re-establishes on
+  // the Панель render anyway (dashboard.js startTile), and Панель is live:true.
   restartTile: (id) => {
     const st = players.get(id); if (st && st.player) st.player.close(); players.delete(id);
     const v = document.querySelector(`#tile-${id} video`); if (v) v.srcObject = null;
-    router.renderActive();
+    router.renderLive();
   },
   viewerRowClick,
   syncViewerPlayer,

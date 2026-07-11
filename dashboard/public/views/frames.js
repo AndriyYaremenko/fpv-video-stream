@@ -8,9 +8,10 @@ import { el, escapeHtml } from '/views/components.js';
 const PAGE_LIMIT = 200;
 const TIME_PRESETS = [['1', '1 год'], ['24', '24 год'], ['168', '7 д']];
 
-// Module-level (closure) state so the applied filter + already-loaded frames survive the 30s
-// re-render tick (router.renderActive() re-mounts the active screen) and leaving/returning to
-// this screen — render() only ever fetches on first mount or on an explicit user action.
+// Module-level (closure) state so the applied filter + already-loaded frames survive leaving and
+// returning to this screen. This route is NOT live:true, so data ticks never re-mount it (router
+// .renderLive skips it) — render() runs only on hashchange mount or an explicit user action
+// («Застосувати»/«Показати ще»/preset), and each fetch is on mount or those actions only.
 let filter = { scanner: '', band: '', standard: '', snrMin: '', from: '', to: '' };
 let frames = [];
 let lastPageLen = 0;
