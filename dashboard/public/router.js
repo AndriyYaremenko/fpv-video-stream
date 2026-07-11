@@ -23,6 +23,15 @@ export function createRouter({ routes, ctx }) {
     sizeCtl.classList.toggle('hidden', r.hash !== '#/dashboard'); // slider only on dashboard
     r.mount(document.getElementById(r.section), ctx);
   }
+  // Data-tick re-render: only re-mount the active screen if it derives from the live store
+  // (dashboard/viewer/nodes = `live:true`, and their render() is reconcile-safe). Fetch-on-demand
+  // screens (detections/frames) are NOT re-mounted on ticks — that would wipe half-typed toolbar
+  // filters (Кадри) and pointlessly rebuild a cached table (Детекції). They render on mount +
+  // their own explicit refresh/apply/pagination actions.
+  function renderLive() {
+    const r = currentRoute();
+    if (r.live) r.mount(document.getElementById(r.section), ctx);
+  }
   window.addEventListener('hashchange', renderActive);
-  return { start() { if (!location.hash) location.hash = routes[0].hash; renderActive(); }, renderActive, currentRoute };
+  return { start() { if (!location.hash) location.hash = routes[0].hash; renderActive(); }, renderActive, renderLive, currentRoute };
 }

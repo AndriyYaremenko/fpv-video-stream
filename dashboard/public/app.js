@@ -129,10 +129,14 @@ const ctx = {
   handlers: {},
 };
 
+// `live:true` = re-mount on every SSE/MQTT data tick (its render() reads the live store and is
+// reconcile-safe — never wipes a live <video> or a user-typed input). detections/frames omit it:
+// they fetch on mount + explicit refresh/apply/pagination, so ticking them only wipes half-typed
+// filters and rebuilds cached tables (see router.renderLive).
 const routes = [
-  { hash: '#/dashboard', label: 'Панель', icon: '▤', section: 'screen-dashboard', mount: renderDashboard },
-  { hash: '#/viewer', label: 'FPV Viewer', icon: '🎯', section: 'screen-viewer', mount: renderViewer },
-  { hash: '#/nodes', label: 'Вузли', icon: '▦', section: 'screen-nodes', mount: renderNodes },
+  { hash: '#/dashboard', label: 'Панель', icon: '▤', section: 'screen-dashboard', mount: renderDashboard, live: true },
+  { hash: '#/viewer', label: 'FPV Viewer', icon: '🎯', section: 'screen-viewer', mount: renderViewer, live: true },
+  { hash: '#/nodes', label: 'Вузли', icon: '▦', section: 'screen-nodes', mount: renderNodes, live: true },
   { hash: '#/detections', label: 'Детекції', icon: '≣', section: 'screen-detections', mount: renderDetections },
   { hash: '#/frames', label: 'Кадри', icon: '🖼️', section: 'screen-frames', mount: renderFrames },
 ];
@@ -222,10 +226,14 @@ function updateStatus() {
   const dets = ctx.scanners().flatMap((s) => (scanClient.store[s.id] && scanClient.store[s.id].detection && scanClient.store[s.id].detection.detections) || []).length;
   document.getElementById('global-status').textContent = `${dets} активних детекцій`;
 }
-// Close players for cameras that no longer exist (deleted/converted), even off the dashboard screen.
+// Close players for cameras that are gone (deleted/converted) OR offline, even when the operator is
+// on another screen. dashboard.js only starts/reuses players for ONLINE cameras and only while the
+// Панель screen is mounted, so without this an offline camera would leak a dead RTCPeerConnection
+// until the dashboard is next visited. Runs on every data tick (all screens); startTile re-establishes
+// a returning camera on the next dashboard render.
 function prunePlayers() {
-  const ids = new Set(ctx.cameras().map((d) => d.id));
-  for (const id of [...players.keys()]) if (!ids.has(id)) ctx.handlers.closeTile(id);
+  const onlineIds = new Set(ctx.cameras().filter((d) => d.online).map((d) => d.id));
+  for (const id of [...players.keys()]) if (!onlineIds.has(id)) ctx.handlers.closeTile(id);
 }
 function onData(newDevices) {
   if (newDevices) devices = newDevices;
@@ -233,7 +241,7 @@ function onData(newDevices) {
   computeNewDetKeys();
   updateStatus();
   prunePlayers();
-  router.renderActive();
+  router.renderLive();
 }
 function connectSSE() {
   const es = new EventSource('/api/stream');
@@ -254,7 +262,7 @@ async function boot() {
     updateStatus();
     router.start();
     window.__rerender = () => router.renderActive();   // dev-only seam to test view/tile reuse
-    setInterval(() => router.renderActive(), 30000);
+    setInterval(() => router.renderLive(), 30000);
     return;
   }
   const c = await fetch('/api/config');
@@ -275,6 +283,6 @@ async function boot() {
     if (mq && mq.url) scanClient.connect(mq, () => onData());
   } catch { /* no broker creds -> scan panel stays empty until available */ }
   // Age labels/TTL expiry must advance even when MQTT goes quiet.
-  setInterval(() => router.renderActive(), 30000);
+  setInterval(() => router.renderLive(), 30000);
 }
 boot();
