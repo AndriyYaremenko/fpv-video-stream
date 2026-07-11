@@ -1,0 +1,19 @@
+[Unit]
+Description=FPV node telemetry publisher (CPU temp / RAM / host health -> MQTT)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fpv-video-stream/agent/telemetry
+Environment=TELEM_NODE_ID=bladerf
+Environment=TELEM_MQTT_HOST=10.8.0.1
+# Publish creds (MQTT_PUB_USER=bladerf, MQTT_PUB_PASS=<bladerf publish pass>) are secret —
+# put them in /etc/fpv-telemetry.env (not committed). The '-' lets the unit start if absent.
+EnvironmentFile=-/etc/fpv-telemetry.env
+ExecStart=/opt/fpv-video-stream/agent/telemetry/.venv/bin/python -u main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
