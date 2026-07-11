@@ -1,5 +1,6 @@
 // dashboard/public/views/components.js — pure UI atoms shared by all screens.
 import { classColor, fmtFreq, fmtPct } from '/spectrum.js';
+import { isFresh, fmtTemp, fmtMem, fmtPctVal, fmtUptimeShort, throttleState } from '/telemetry-format.js';
 
 export function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 export function el(tag,cls,html){const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;}
@@ -10,3 +11,19 @@ export function pip(online){return `<span class="pip ${online?'on':'off'}">${onl
 export function cornerCard(innerHtml){const c=el('div','card corner',innerHtml);c.insertAdjacentHTML('beforeend','<span class="cm-bl"></span><span class="cm-br"></span>');return c;}
 export function occupancyStrip(bands,occupancy){const wrap=el('div','occ');for(const band of Object.keys(bands||{})){const frac=(occupancy&&occupancy[band])||0;wrap.appendChild(el('div','occ-bar',`<span class="occ-label">${escapeHtml(band)}</span><span class="occ-track"><span class="occ-fill" style="width:${Math.round(frac*100)}%"></span></span><span class="occ-val">${fmtPct(frac)}</span>`));}return wrap;}
 export function detectionCard(det,isNew){const cls=det.class==='analog'?'analog':det.class==='digital'?'digital':'';const c=el('div',`det-card ${cls}${isNew?' is-new':''}`);const chan=det.channel?` (${escapeHtml(det.channel)})`:'';const snr=det.snr_db!=null?` · SNR ${det.snr_db} dB`:'';c.innerHTML=`<div class="dc-top"><span class="dc-freq mono">${fmtFreq(det.center_mhz)}</span>${isNew?'<span class="pip warn">NEW</span>':''}</div><div class="dc-meta">${escapeHtml(det.band||'')}${chan}${snr} · <span style="color:${classColor(det.class)}">${escapeHtml(det.class||'')}</span></div>`;return c;}
+
+// Host-health readout for a node header. `tel` = store[nodeId].telemetry (or null). Stale/missing -> dashes.
+export function nodeHealth(tel, nowS){
+  const t = (tel && isFresh(tel.ts, nowS)) ? tel : null;
+  const wrap = el('div','node-health');
+  const cell = (k,v) => `<div><span class="k">${k}</span><span class="mono">${escapeHtml(v)}</span></div>`;
+  wrap.innerHTML =
+    cell('CPU', fmtTemp(t ? t.cpu_temp_c : null)) +
+    cell('RAM', fmtMem(t)) +
+    cell('LOAD', fmtPctVal(t ? t.cpu_load_pct : null)) +
+    cell('UPTIME', fmtUptimeShort(t ? t.uptime_s : null)) +
+    cell('DISK', fmtPctVal(t ? t.disk_used_pct : null));
+  const thr = throttleState(t);
+  if (thr) wrap.insertAdjacentHTML('beforeend', `<span class="pip ${thr.warn?'warn':''}">${escapeHtml(thr.text)}</span>`);
+  return wrap;
+}

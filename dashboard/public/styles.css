@@ -118,6 +118,14 @@ a{color:var(--aux);}
 .node-card .nc-actions .btn{padding:5px 9px;font-size:12px;}
 .temp-hot{color:var(--threat);} .temp-warm{color:var(--warn);}
 
+/* node group (Вузли screen: one header per physical node, health + member cards) */
+.node-group{border:1px solid var(--line);margin-bottom:var(--gutter);}
+.node-group-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel-2);}
+.node-group-head .ng-title{margin:0;}
+.node-health{display:flex;flex-wrap:wrap;gap:14px;align-items:center;}
+.node-health > div{display:flex;flex-direction:column;}
+.node-health .k{font-size:10px;color:var(--muted);}
+
 /* camera tiles (dashboard) */
 .grid{display:grid;gap:var(--gutter);grid-template-columns:repeat(auto-fill,minmax(var(--tile-min,320px),1fr));}
 .tile{position:relative;aspect-ratio:16/9;background:#000;border:1px solid var(--line);overflow:hidden;cursor:pointer;}

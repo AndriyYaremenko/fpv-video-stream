@@ -10,7 +10,7 @@
 //
 // d.telemetry is a dead field (never populated upstream) — not rendered; the camera card's 4th cell
 // shows live MediaMTX reader count instead (lib/status.js: d.readers).
-import { el, pip, occupancyStrip, fmtUptime, fmtBitrate, tempSlot, escapeHtml } from '/views/components.js';
+import { el, pip, occupancyStrip, fmtUptime, fmtBitrate, escapeHtml, nodeHealth } from '/views/components.js';
 import { RX5808_CHANNELS } from '/rx5808-channels.js';
 import { viewCaption } from '/spectrum.js';
 
@@ -77,7 +77,6 @@ function buildCard(d, ctx, store) {
   card.innerHTML = `<div class="nc-head"><div><div class="nc-title">${escapeHtml(d.name)}</div>
       <div class="nc-sub">${escapeHtml(d.id)} · ${isScanner ? 'SCANNER' : 'CAMERA'}</div></div><span data-role="pip"></span></div>
     <div class="nc-grid">
-      <div><span class="k">TEMP</span>${tempSlot(null)}</div>
       <div><span class="k">UPTIME</span><span class="mono" data-role="uptime">—</span></div>
       <div><span class="k">${isScanner ? 'ЛОКАЦІЯ' : 'BITRATE'}</span><span class="mono" data-role="col3">—</span></div>
       <div><span class="k">${isScanner ? 'ДЕТЕКЦІЙ' : 'READERS'}</span><span class="mono" data-role="col4">0</span></div>
@@ -128,36 +127,66 @@ function updateCard(card, d, ctx, store) {
 
 export function render(container, ctx) {
   container.className = 'screen screen-pad';
-  // Build the header + grid once; reuse the grid (and its cards' live inputs) on subsequent renders.
-  let grid = container.querySelector('.node-strip');
-  if (!grid) {
+  let root = container.querySelector('.node-root');
+  if (!root) {
     container.innerHTML = '';
     container.appendChild(el('div', 'label-caps', 'КЕРУВАННЯ ВУЗЛАМИ'));
-    grid = el('div', 'node-strip');
-    container.appendChild(grid);
+    root = el('div', 'node-root');
+    container.appendChild(root);
+  }
+  const store = ctx.scanStore();
+  const nowS = Math.floor(Date.now() / 1000);
+
+  // Partition devices: node-id -> [devices], plus node-less standalone.
+  const groups = new Map();
+  const standalone = [];
+  for (const d of ctx.devices()) {
+    if (d.node) { if (!groups.has(d.node)) groups.set(d.node, []); groups.get(d.node).push(d); }
+    else standalone.push(d);
   }
 
-  const store = ctx.scanStore();
-  const devices = ctx.devices();
-  const wantIds = new Set(devices.map((d) => d.id));
+  // Drop containers for nodes/standalone that no longer exist.
+  const wantKeys = new Set([...[...groups.keys()].map((n) => `group:${n}`), ...(standalone.length ? ['loose'] : [])]);
+  for (const child of [...root.children]) {
+    if (child.dataset && child.dataset.key && !wantKeys.has(child.dataset.key)) child.remove();
+  }
 
-  // Index existing cards by id; drop cards for devices that no longer exist.
+  // Node groups: header (label + live health) + member radio cards.
+  for (const [nodeId, devs] of groups) {
+    let group = [...root.children].find((c) => c.dataset && c.dataset.key === `group:${nodeId}`);
+    if (!group) {
+      group = el('div', 'node-group');
+      group.dataset.key = `group:${nodeId}`;
+      group.innerHTML = `<div class="node-group-head"><div class="ng-title label-caps"></div><div class="ng-health"></div></div><div class="node-strip"></div>`;
+      root.appendChild(group);
+    }
+    group.querySelector('.ng-title').textContent = `ВУЗОЛ · ${nodeId}`;
+    const healthSlot = group.querySelector('.ng-health');
+    healthSlot.innerHTML = '';
+    healthSlot.appendChild(nodeHealth(store[nodeId] && store[nodeId].telemetry, nowS));
+    reconcileCards(group.querySelector('.node-strip'), devs, ctx, store);
+  }
+
+  // Standalone (node-less) devices.
+  let loose = [...root.children].find((c) => c.dataset && c.dataset.key === 'loose');
+  if (standalone.length) {
+    if (!loose) { loose = el('div', 'node-strip'); loose.dataset.key = 'loose'; root.appendChild(loose); }
+    reconcileCards(loose, standalone, ctx, store);
+  }
+}
+
+// Reuse-aware card reconcile within one grid (extracted from the old render loop).
+function reconcileCards(grid, devices, ctx, store) {
   const existing = new Map();
   for (const child of [...grid.children]) {
     const id = child.dataset && child.dataset.id;
     if (!id) continue;
-    if (!wantIds.has(id)) child.remove();
+    if (!devices.some((d) => d.id === id)) child.remove();
     else existing.set(id, child);
   }
-
-  // Reuse or build each card, then update its live fields in place.
   for (const d of devices) {
     let card = existing.get(d.id);
-    if (!card || card.dataset.kind !== d.kind) {   // rebuild if a device changed kind (rare)
-      if (card) card.remove();
-      card = buildCard(d, ctx, store);
-      grid.appendChild(card);
-    }
+    if (!card || card.dataset.kind !== d.kind) { if (card) card.remove(); card = buildCard(d, ctx, store); grid.appendChild(card); }
     updateCard(card, d, ctx, store);
   }
 }
