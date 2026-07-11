@@ -1,4 +1,26 @@
-from collector import parse_throttled, parse_meminfo, parse_loadavg, parse_uptime, millideg_to_c
+from collector import parse_throttled, parse_meminfo, parse_loadavg, parse_uptime, millideg_to_c, build_payload
+
+
+class FakeReader:
+    def cpu_temp(self): return 62.4
+    def mem(self): return {"mem_total_mb": 4000, "mem_used_mb": 976, "mem_used_pct": 24}
+    def load(self): return 38
+    def uptime(self): return 123456
+    def disk(self): return 47
+    def throttled(self): return {"throttled": False, "throttled_ever": True, "throttle_flags": "0x50000"}
+
+
+class EmptyReader:
+    def cpu_temp(self): return None
+    def mem(self): return None
+    def load(self): return None
+    def uptime(self): return None
+    def disk(self): return None
+    def throttled(self): return None
+
+
+PAYLOAD_KEYS = {"node_id", "ts", "cpu_temp_c", "cpu_load_pct", "mem_used_mb", "mem_total_mb",
+                "mem_used_pct", "disk_used_pct", "uptime_s", "throttled", "throttled_ever", "throttle_flags"}
 
 
 def test_parse_throttled_flags():
@@ -35,3 +57,17 @@ def test_parse_uptime():
 def test_millideg_to_c():
     assert millideg_to_c("62400\n") == 62.4
     assert millideg_to_c("bad") is None
+
+
+def test_build_payload_full():
+    p = build_payload("bladerf", ts=1000, reader=FakeReader())
+    assert set(p) == PAYLOAD_KEYS
+    assert p["node_id"] == "bladerf" and p["ts"] == 1000
+    assert p["cpu_temp_c"] == 62.4 and p["mem_used_pct"] == 24
+    assert p["throttled_ever"] is True and p["throttle_flags"] == "0x50000"
+
+
+def test_build_payload_all_nulls_stable_shape():
+    p = build_payload("bladerf", ts=1000, reader=EmptyReader())
+    assert set(p) == PAYLOAD_KEYS
+    assert p["cpu_temp_c"] is None and p["mem_used_mb"] is None and p["throttled"] is None
