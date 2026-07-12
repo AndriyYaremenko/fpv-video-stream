@@ -105,6 +105,33 @@ export function viewStream(store, id) {
   return (v && v.stream) || `${id}-view`;
 }
 
+export function viewerLabel(id) {
+  const map = { bladerf: 'bladeRF', hackrf: 'HackRF' };
+  return map[id] || id;
+}
+
+// Online, view-capable scanners as render cards — one player per card. Sorted by id for a stable grid.
+export function viewerCards(store) {
+  return Object.keys(store || {})
+    .filter((id) => store[id] && store[id].online && store[id].view)
+    .sort()
+    .map((id) => ({ id, label: viewerLabel(id), stream: viewStream(store, id), view: store[id].view }));
+}
+
+// Freq of the prev/next detection relative to curFreq (dir ±1), among rows sorted ascending, wrapping
+// at the ends. curFreq null/NaN -> lowest (up) or highest (down). Empty rows -> null.
+export function stepDetectionFreq(rows, curFreq, dir) {
+  const freqs = [...new Set((rows || []).map((r) => r.center_mhz))].sort((a, b) => a - b);
+  if (!freqs.length) return null;
+  if (curFreq == null || !Number.isFinite(curFreq)) return dir > 0 ? freqs[0] : freqs[freqs.length - 1];
+  if (dir > 0) {
+    const nxt = freqs.find((f) => f > curFreq + 1e-6);
+    return nxt != null ? nxt : freqs[0];
+  }
+  const prevs = freqs.filter((f) => f < curFreq - 1e-6);
+  return prevs.length ? prevs[prevs.length - 1] : freqs[freqs.length - 1];
+}
+
 // Player identity: the persistent engine keeps ONE MediaMTX path alive across
 // start/stop/retune (placeholder while idle), so the player binds to the
 // stream name only. It changes exactly when the panel switches scanners.
