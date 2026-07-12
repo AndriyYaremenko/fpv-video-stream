@@ -168,6 +168,10 @@ from iqring import IqRing
 VIEW_RING_SECONDS = 2.0            # rx ring depth: absorbs demod hiccups, bounds memory
 VIEW_READ_SAMPLES = 65536         # samples per sync_rx pull (~8 ms at 8 MS/s): bounds stop latency
 
+VIEW_STREAM_TIMEOUT_MS = 3500     # bladeRF sync_rx per-call timeout: a silent device blocks read() up to this long
+VIEW_CLOSE_JOIN_S = VIEW_STREAM_TIMEOUT_MS / 1000.0 + 1.0   # close() join MUST outlast a maximal blocking read()
+                                                            # so the radio is never closed while the reader is inside sync_rx
+
 
 class BladerfViewSource:
     """CaptureSource for the view stream over an injected streaming radio factory.
@@ -226,7 +230,7 @@ class BladerfViewSource:
         if self._stop_reader is not None:
             self._stop_reader.set()
         if self._reader is not None:
-            self._reader.join(timeout=2.0)
+            self._reader.join(timeout=VIEW_CLOSE_JOIN_S)
         self._reader = None
         self._stop_reader = None
         try:
@@ -301,6 +305,6 @@ def open_bladerf_view_radio(gain_db, sample_rate_hz, bandwidth_hz) -> BladeRfVie
     radio.set_bandwidth(ch, int(bandwidth_hz))
     radio.sync_config(
         layout=_bladerf.ChannelLayout.RX_X1, fmt=_bladerf.Format.SC16_Q11,
-        num_buffers=16, buffer_size=8192, num_transfers=8, stream_timeout=3500,
+        num_buffers=16, buffer_size=8192, num_transfers=8, stream_timeout=VIEW_STREAM_TIMEOUT_MS,
     )
     return BladeRfViewRadio(radio, ch)

@@ -238,3 +238,10 @@ def test_close_stops_reader_and_reopens_on_next_tune():
     s.tune(905e6)
     assert len(radios) == 2 and radios[1].freqs == [905000000]
     s.close()
+
+
+def test_close_join_outlasts_max_read_block():
+    # The close() join must outlast a maximal blocking read(), else close() could
+    # close the radio while the reader thread is still inside sync_rx (same handle).
+    from bladerf_source import VIEW_CLOSE_JOIN_S, VIEW_STREAM_TIMEOUT_MS
+    assert VIEW_CLOSE_JOIN_S > VIEW_STREAM_TIMEOUT_MS / 1000.0
