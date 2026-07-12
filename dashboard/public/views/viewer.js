@@ -1,12 +1,10 @@
-// dashboard/public/views/viewer.js — «FPV Viewer» screen: merged detection list (left) +
-// shared gen-token WHEP player + mini-spectrum + manual view controls (right).
-// Reconcile-based like dashboard.js: the `.viewer` skeleton (incl. #viewer-video, the player's
-// mount point) is built ONCE and reused across renders, so app.js's WHEP player never churns.
+// dashboard/public/views/viewer.js — «FPV Viewer»: merged detection list (left) +
+// a reconciled grid of per-viewer player cards (right), one per online view-capable SDR.
+// Cards (and their live #viewer-video-<id> + MHz input) are built ONCE per id and reused
+// across renders — never re-innerHTML'd — so WHEP players and typed input survive data ticks.
 import { el, escapeHtml } from '/views/components.js';
-import { viewerRows, activeViewer, pickViewer, ageLabel } from '/viewer.js';
-// Note: viewStream() is not imported — app.js's syncViewerPlayer() (called below, after every
-// DOM update) owns stream-name resolution and the WHEP player lifecycle for #viewer-video.
-import { renderMiniSpectrum, classColor, fmtFreq, viewCaption, frameCaption } from '/spectrum.js';
+import { viewerRows, viewerCards, stepDetectionFreq, ageLabel } from '/viewer.js';
+import { renderMiniSpectrum, classColor, fmtFreq, viewCaption } from '/spectrum.js';
 import { nearestRxChannel } from '/rx5808-channels.js';
 
 export function render(container, ctx) {
@@ -14,128 +12,131 @@ export function render(container, ctx) {
   let root = container.querySelector('.viewer');
   if (!root) {
     container.innerHTML = '';
-    root = buildSkeleton(ctx);
+    root = el('div', 'viewer');
+    const list = el('div', 'viewer-list');
+    list.addEventListener('click', (e) => {
+      const btn = e.target.closest('.vw-go');
+      if (!btn) return;
+      const freq = Number(btn.dataset.vwfreq);
+      if (!Number.isFinite(freq)) return;
+      ctx.handlers.viewerRowClick(freq, btn.dataset.vwband || '', btn.dataset.vid || '');
+    });
+    root.appendChild(list);
+    root.appendChild(el('div', 'viewer-cards'));
     container.appendChild(root);
   }
-  updateSkeleton(root, ctx);
+  update(root, ctx);
 }
 
-// ---- one-time DOM + listeners (never rebuilt; keeps #viewer-video alive across renders) ----
-function buildSkeleton(ctx) {
-  const root = el('div', 'viewer');
+function update(root, ctx) {
+  const nowS = Math.floor(Date.now() / 1000);
+  const store = ctx.scanStore();
+  const cards = ctx.scanners().length ? viewerCards(store) : [];
+  const rows = viewerRows(ctx.viewerState(), nowS);
 
-  const list = el('div', 'viewer-list');
-  // Delegated click: the list body is rebuilt every render, the listener is not.
-  list.addEventListener('click', (e) => {
-    const row = e.target.closest('.viewer-row');
-    if (!row) return;
-    const freq = Number(row.dataset.vwfreq);
-    if (!Number.isFinite(freq)) return;
-    ctx.handlers.viewerRowClick(freq, row.dataset.vwband || '', row.dataset.sid || '');
-  });
+  renderList(root.querySelector('.viewer-list'), cards, rows, nowS, store);
+  reconcileCards(root.querySelector('.viewer-cards'), cards, ctx, rows, store);
 
-  const stage = el('div', 'viewer-stage', `
-    <video id="viewer-video" autoplay playsinline muted></video>
+  ctx.handlers.syncViewerPlayers();   // (re)bind WHEP players to the mounted #viewer-video-<id>
+}
+
+// ---- left: merged detection list; each row carries a ▶ button per online viewer ----
+function renderList(list, cards, rows, nowS, store) {
+  // Highlight rows whose freq matches ANY active view session.
+  const activeFreqs = cards.filter((c) => c.view && c.view.active).map((c) => c.view.freq_mhz);
+  list.innerHTML = '';
+  if (!cards.length) list.appendChild(el('p', 'muted', 'SDR view недоступний (view-сканер офлайн)'));
+  if (!rows.length) { list.appendChild(el('p', 'muted', 'детекцій немає — чекаємо на скан')); return; }
+  for (const e of rows) list.appendChild(rowEl(e, cards, nowS, activeFreqs));
+}
+
+function rowEl(entry, cards, nowS, activeFreqs) {
+  const viewing = activeFreqs.some((f) => f != null && Math.abs(entry.center_mhz - f) < 3);
+  const clsName = entry.class === 'analog' ? 'analog' : entry.class === 'digital' ? 'digital' : '';
+  const row = el('div', `viewer-row${clsName ? ` ${clsName}` : ''}${entry.live ? '' : ' recent'}${viewing ? ' is-viewing' : ''}`);
+  const freqTxt = `${fmtFreq(entry.center_mhz)}${entry.channel ? ` (${escapeHtml(entry.channel)})` : ''}`;
+  const snr = entry.snr_db == null ? '—' : `${Number(entry.snr_db).toFixed(1)} dB`;
+  const src = Object.keys(entry.seen_by || {}).map(escapeHtml).join(', ') || '—';
+  const age = entry.live ? 'зараз' : ageLabel(nowS, entry.last_seen);
+  const btns = cards.map((c) =>
+    `<button type="button" class="vw-go" data-vid="${escapeHtml(c.id)}" data-vwfreq="${Number(entry.center_mhz)}" ` +
+    `data-vwband="${escapeHtml(entry.band || '')}">▶ ${escapeHtml(c.label)}</button>`).join('');
+  row.innerHTML = `<div class="vr-top"><span class="vr-freq mono">${freqTxt}</span>` +
+    `<span class="mono" style="color:${classColor(entry.class)}">${escapeHtml(entry.class || '')}</span></div>` +
+    `<div class="vr-meta">${escapeHtml(entry.band || '')} · SNR ${snr} · ${src} · ${age}</div>` +
+    `<div class="vr-go">${btns}</div>`;
+  return row;
+}
+
+// ---- right: reconcile a card per viewer id (reuse; never destroy a live <video> or MHz input) ----
+function reconcileCards(wrap, cards, ctx, rows, store) {
+  const wantIds = new Set(cards.map((c) => c.id));
+  for (const child of [...wrap.children]) {
+    const id = child.id ? child.id.replace('viewer-card-', '') : '';
+    if (id && !wantIds.has(id)) child.remove();
+  }
+  const empty = wrap.querySelector('.viewer-cards-empty'); if (empty) empty.remove();
+  for (const c of cards) {
+    let card = document.getElementById(`viewer-card-${c.id}`);
+    if (!card) { card = buildCard(c, ctx, rows); wrap.appendChild(card); }
+    card.__ctxRows = rows;                                  // fresh rows for the steppers' click reads
+    updateCard(card, c, store);
+  }
+  if (!cards.length) wrap.appendChild(el('p', 'muted viewer-cards-empty', 'Немає доступних вьюверів.'));
+}
+
+function buildCard(c, ctx, rows) {
+  const card = el('div', 'viewer-card');
+  card.id = `viewer-card-${c.id}`;
+  card.__ctxRows = rows;
+  card.innerHTML = `
+    <div class="vc-head mono">${escapeHtml(c.label)}</div>
+    <video id="viewer-video-${escapeHtml(c.id)}" autoplay playsinline muted></video>
     <div class="view-controls">
-      <input id="viewer-freq" type="number" min="100" max="6000" step="1" placeholder="МГц" />
-      <button type="button" id="viewer-play" class="btn">▶ дивитись</button>
-      <button type="button" id="viewer-stop" class="btn" hidden>■ свіп</button>
-      <span id="viewer-badge" class="view-badge"></span>
-      <span id="viewer-err" class="view-err"></span>
+      <button type="button" class="btn vc-step" data-dir="-1">◀</button>
+      <input class="vc-freq" type="number" min="100" max="6000" step="1" placeholder="МГц" />
+      <button type="button" class="btn vc-step" data-dir="1">▶</button>
+      <button type="button" class="btn vc-play">▶ дивитись</button>
+      <button type="button" class="btn vc-stop" hidden>■ свіп</button>
+      <span class="vc-badge view-badge"></span>
+      <span class="vc-err view-err"></span>
     </div>
-    <canvas class="mini-spectrum" width="300" height="60"></canvas>
-    <img id="viewer-thumb" alt="відновлений кадр"
-      style="max-width:100%;border:1px solid var(--line);cursor:pointer;display:block;" hidden />
-  `);
+    <canvas class="mini-spectrum" width="300" height="60"></canvas>`;
 
-  const freqInput = stage.querySelector('#viewer-freq');
-  stage.querySelector('#viewer-play').addEventListener('click', () => {
-    const vid = pickViewer(ctx.scanStore());
+  const freqInput = card.querySelector('.vc-freq');
+  const curFreq = () => {
+    const view = card.__view;
+    if (view && view.active && view.freq_mhz != null) return view.freq_mhz;
+    const v = Number(freqInput.value);
+    return Number.isFinite(v) ? v : null;
+  };
+  card.querySelectorAll('.vc-step').forEach((b) => b.addEventListener('click', () => {
+    const f = stepDetectionFreq(card.__ctxRows, curFreq(), Number(b.dataset.dir));
+    if (f != null) { freqInput.value = String(f); ctx.onViewStart(c.id, f); }
+  }));
+  card.querySelector('.vc-play').addEventListener('click', () => {
     const f = Number(freqInput.value);
-    if (vid && Number.isFinite(f) && f >= 100 && f <= 6000) ctx.onViewStart(vid, f);
+    if (Number.isFinite(f) && f >= 100 && f <= 6000) ctx.onViewStart(c.id, f);
   });
-  stage.querySelector('#viewer-stop').addEventListener('click', () => {
-    const aid = activeViewer(ctx.scanStore());
-    if (aid) ctx.onViewStop(aid);
-  });
+  card.querySelector('.vc-stop').addEventListener('click', () => ctx.onViewStop(c.id));
 
-  // Canvas freq-pick: click fills the manual freq field; on the 5.8G band it also nudges the
-  // RX5808 (same scanner the mini-spectrum is drawn for) to the nearest hardware channel.
-  const canvas = stage.querySelector('canvas.mini-spectrum');
+  const canvas = card.querySelector('canvas.mini-spectrum');
   canvas.addEventListener('click', (e) => {
-    const lo = Number(canvas.dataset.lowMhz);
-    const hi = Number(canvas.dataset.highMhz);
+    const lo = Number(canvas.dataset.lowMhz), hi = Number(canvas.dataset.highMhz);
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
     const rect = canvas.getBoundingClientRect();
     const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
     const freq = Math.round(lo + (x / (rect.width || 1)) * (hi - lo));
     freqInput.value = String(freq);
-    if (canvas.classList.contains('tunable')) {
-      const sid = canvas.dataset.sid;
+    if (canvas.classList.contains('tunable') && canvas.dataset.sid) {
       const ch = nearestRxChannel(freq);
-      if (sid && ch) ctx.onScanCmd(sid, { mode: 'manual', channel: ch.name });
+      if (ch) ctx.onScanCmd(canvas.dataset.sid, { mode: 'manual', channel: ch.name });
     }
   });
-
-  const thumb = stage.querySelector('#viewer-thumb');
-  thumb.addEventListener('click', () => {
-    if (!thumb.hidden && thumb.src) ctx.handlers.openImage(thumb.src, thumb.dataset.cap || '');
-  });
-
-  root.appendChild(list);
-  root.appendChild(stage);
-  return root;
+  return card;
 }
 
-// ---- per-tick refresh: rows, badge, mini-spectrum, thumbnail, then hand off to app.js's player ----
-function updateSkeleton(root, ctx) {
-  const nowS = Math.floor(Date.now() / 1000);
-  const store = ctx.scanStore();
-
-  const routeId = pickViewer(store);       // where a NEW ▶ start goes
-  const activeId = activeViewer(store);    // whose session the panel is CURRENTLY showing
-  const displayId = activeId || routeId;   // scanner behind the stage (spectrum/thumbnail)
-  const view = activeId ? store[activeId].view : null;
-
-  renderList(root.querySelector('.viewer-list'), ctx, nowS, view);
-  renderStage(root.querySelector('.viewer-stage'), store, displayId, view);
-
-  // Mounted (or re-confirmed) #viewer-video above; let app.js's gen-token player attach/resync.
-  ctx.handlers.syncViewerPlayer();
-}
-
-function renderList(list, ctx, nowS, view) {
-  const rows = viewerRows(ctx.viewerState(), nowS, ctx.scanStore());
-  const activeFreq = view && view.active ? view.freq_mhz : null;
-  const canView = !!pickViewer(ctx.scanStore());
-  list.innerHTML = '';
-  if (!canView) list.appendChild(el('p', 'muted', 'SDR view недоступний (view-сканер офлайн)'));
-  if (!rows.length) {
-    list.appendChild(el('p', 'muted', 'детекцій немає — чекаємо на скан'));
-    return;
-  }
-  for (const e of rows) list.appendChild(rowEl(e, nowS, activeFreq));
-}
-
-function rowEl(entry, nowS, activeFreq) {
-  const viewing = activeFreq != null && Math.abs(entry.center_mhz - activeFreq) < 3;
-  const clsName = entry.class === 'analog' ? 'analog' : entry.class === 'digital' ? 'digital' : '';
-  const row = el('div', `viewer-row${clsName ? ` ${clsName}` : ''}${entry.live ? '' : ' recent'}${viewing ? ' is-viewing' : ''}`);
-  row.dataset.vwfreq = String(entry.center_mhz);
-  row.dataset.vwband = entry.band || '';
-  row.dataset.sid = Object.keys(entry.seen_by || {})[0] || '';
-  const freqTxt = `${fmtFreq(entry.center_mhz)}${entry.channel ? ` (${escapeHtml(entry.channel)})` : ''}`;
-  const snr = entry.snr_db == null ? '—' : `${Number(entry.snr_db).toFixed(1)} dB`;
-  const src = Object.keys(entry.seen_by || {}).map(escapeHtml).join(', ') || '—';
-  const age = entry.live ? 'зараз' : ageLabel(nowS, entry.last_seen);
-  row.innerHTML = `<div class="vr-top"><span class="vr-freq mono">${freqTxt}</span>` +
-    `<span class="mono" style="color:${classColor(entry.class)}">${escapeHtml(entry.class || '')}</span></div>` +
-    `<div class="vr-meta">${escapeHtml(entry.band || '')} · SNR ${snr} · ${src} · ${age}</div>`;
-  return row;
-}
-
-// The band behind the mini-spectrum/thumbnail: whichever band range contains the active view's
-// frequency; otherwise 5.8G (RX5808's band), else whatever band data the scanner reports.
+// The band behind a card's mini-spectrum: band containing the active view freq; else 5.8G; else first.
 function pickBand(live, view) {
   const bands = (live && live.bands) || {};
   if (view && view.active && view.freq_mhz != null) {
@@ -148,39 +149,25 @@ function pickBand(live, view) {
   return keys.length ? keys[0] : null;
 }
 
-function renderStage(stage, store, displayId, view) {
-  stage.querySelector('#viewer-badge').textContent = view ? viewCaption(view) : '';
-  stage.querySelector('#viewer-err').textContent = (view && view.error) || '';
-  stage.querySelector('#viewer-stop').hidden = !(view && view.active);
+function updateCard(card, c, store) {
+  const view = c.view;
+  card.__view = view;                                        // for the steppers' curFreq()
+  card.querySelector('.vc-badge').textContent = view ? viewCaption(view) : '';
+  card.querySelector('.vc-err').textContent = (view && view.error) || '';
+  card.querySelector('.vc-stop').hidden = !(view && view.active);
+  card.classList.toggle('is-active', !!(view && view.active));
 
-  const live = displayId ? store[displayId] : null;
+  const live = store[c.id] || null;
   const band = live ? pickBand(live, view) : null;
   const range = (live && band && live.bands && live.bands[band]) || {};
   const psd = (live && band && live.latestPsd && live.latestPsd[band]) || [];
   const dets = live ? ((live.detection && live.detection.detections) || []).filter((d) => d.band === band) : [];
   const rxFreq = live && live.rxtune ? live.rxtune.freq_mhz : null;
 
-  const canvas = stage.querySelector('canvas.mini-spectrum');
-  canvas.classList.remove('tunable');   // renderMiniSpectrum only ever adds it back
+  const canvas = card.querySelector('canvas.mini-spectrum');
+  canvas.classList.remove('tunable');
   if (range.low_mhz != null) {
-    canvas.dataset.lowMhz = range.low_mhz;
-    canvas.dataset.highMhz = range.high_mhz;
-    canvas.dataset.sid = displayId;
-  } else {
-    delete canvas.dataset.lowMhz;
-    delete canvas.dataset.highMhz;
-    delete canvas.dataset.sid;
-  }
+    canvas.dataset.lowMhz = range.low_mhz; canvas.dataset.highMhz = range.high_mhz; canvas.dataset.sid = c.id;
+  } else { delete canvas.dataset.lowMhz; delete canvas.dataset.highMhz; delete canvas.dataset.sid; }
   renderMiniSpectrum(canvas, { psd, range, dets, rxFreq, tunable: band === '5.8G' });
-
-  const thumb = stage.querySelector('#viewer-thumb');
-  const video = live && live.video;
-  if (video && video.frame_png_b64) {
-    thumb.src = `data:image/png;base64,${video.frame_png_b64}`;
-    thumb.dataset.cap = frameCaption(video);
-    thumb.hidden = false;
-  } else {
-    thumb.hidden = true;
-    thumb.removeAttribute('src');
-  }
 }
