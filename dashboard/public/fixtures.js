@@ -30,7 +30,7 @@ export const FIXTURES = {
       { band:'900M',center_mhz:915,class:'digital',power_dbm:-55,bandwidth_mhz:10,confidence:0.7 } ] },
     video:{ ts:NOW-5, center_mhz:5800, standard:'PAL', line_hz:15625, sync_snr_db:18.3, frame_png_b64:'' },
     rxtune:{ ts:NOW, freq_mhz:5865, channel:'A1', mode:'scan', targets:[] },
-    view:{ ts:NOW, active:true, freq_mhz:5800, until_ts:NOW+600, error:null, stream:'bladerf-view' },
+    view:{ ts:NOW, active:true, freq_mhz:5800, until_ts:NOW+600, error:null, stream:'bladerf-view', bandwidth_mhz:3 },
   }
   , hackrf: {
     online: true, status_ts: NOW,
