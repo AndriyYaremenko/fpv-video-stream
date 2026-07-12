@@ -34,3 +34,56 @@ def test_build_ffmpeg_decode_cmd():
     vf = cmd[cmd.index("-vf") + 1]
     assert "fps=25" in vf and "scale=640:512" in vf and "format=gray" in vf
     assert "rawvideo" in cmd
+
+
+def test_render_drops_partial_final_frame(tmp_path):
+    import numpy as np
+    from render import render, frame_to_iq
+    w, h = 16, 16
+    full = b"\x80" * (w * h)
+    chunks = [full, full, b"\x01\x02\x03"]  # 2 full frames + a short (partial) tail
+
+    class _FakeStdout:
+        def __init__(self, data): self._data = list(data); self._i = 0
+        def read(self, n):
+            if self._i >= len(self._data): return b""
+            c = self._data[self._i]; self._i += 1; return c
+
+    class _FakeProc:
+        def __init__(self): self.stdout = _FakeStdout(chunks)
+        def kill(self): pass
+        def wait(self, timeout=None): pass
+
+    out_bin = tmp_path / "iq.bin"
+    frames, written = render("x.mp4", str(out_bin), standard="PAL", fs=4e6,
+                             deviation_hz=1e6, width=w, height=h, fps=25, max_secs=1.0,
+                             vbi_lines=2, popen=lambda *a, **k: _FakeProc())
+    one = frame_to_iq(np.frombuffer(full, dtype=np.uint8).reshape(h, w),
+                      "PAL", 4e6, 1e6, True, 2)
+    assert frames == 2                       # partial 3-byte tail dropped, not counted
+    assert written == 2 * len(one)           # only full frames written
+    assert out_bin.stat().st_size == written
+
+
+def test_render_respects_max_frames_cap(tmp_path):
+    from render import render, frame_to_iq
+    import numpy as np
+    w, h = 16, 16
+    full = b"\x80" * (w * h)
+
+    class _EndlessStdout:
+        def read(self, n): return full   # never runs out -> only the cap can stop the loop
+
+    class _FakeProc:
+        def __init__(self): self.stdout = _EndlessStdout()
+        def kill(self): pass
+        def wait(self, timeout=None): pass
+
+    out_bin = tmp_path / "iq.bin"
+    frames, written = render("x.mp4", str(out_bin), standard="PAL", fs=4e6,
+                             deviation_hz=1e6, width=w, height=h, fps=25, max_secs=0.08,
+                             vbi_lines=2, popen=lambda *a, **k: _FakeProc())
+    one = frame_to_iq(np.frombuffer(full, dtype=np.uint8).reshape(h, w),
+                      "PAL", 4e6, 1e6, True, 2)
+    assert frames == 2                       # int(round(0.08*25)) == 2, loop is cap-bounded
+    assert written == 2 * len(one)

@@ -31,10 +31,9 @@ class BladeRfTxRadio:
     """Open TX handle: write(bytes) -> sync_tx one block; set_frequency; close. Radio/channel
     injected (open_bladerf_tx_radio) so this class imports nothing from `bladerf`."""
 
-    def __init__(self, radio, channel, block_samples):
+    def __init__(self, radio, channel):
         self._radio = radio
         self._ch = channel
-        self._block_samples = int(block_samples)
 
     def write(self, buf):
         # buf is block_samples*4 SC16_Q11 bytes; sync_tx wants a mutable buffer + sample count.
@@ -55,7 +54,7 @@ class BladeRfTxRadio:
                 LOG.exception("bladeRF TX close failed")
 
 
-def open_bladerf_tx_radio(freq_hz, fs_hz, gain_db, bandwidth_hz, block_samples=32768) -> BladeRfTxRadio:
+def open_bladerf_tx_radio(freq_hz, fs_hz, gain_db, bandwidth_hz) -> BladeRfTxRadio:
     """Open the first bladeRF configured for continuous TX (SC16_Q11). Only bladeRF-touching fn."""
     import bladerf
     from bladerf import _bladerf
@@ -70,4 +69,4 @@ def open_bladerf_tx_radio(freq_hz, fs_hz, gain_db, bandwidth_hz, block_samples=3
         num_buffers=16, buffer_size=8192, num_transfers=8, stream_timeout=TX_STREAM_TIMEOUT_MS,
     )
     radio.enable_module(ch, True)
-    return BladeRfTxRadio(radio, ch, block_samples)
+    return BladeRfTxRadio(radio, ch)
