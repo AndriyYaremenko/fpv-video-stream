@@ -279,6 +279,20 @@ def main() -> None:
                             viewcfg, source, freq, stop, max_s, encoder,
                             channel_of=nearest_channel)
                         reset = source.close     # release the device for the sweep; no USB re-enum per session
+                    elif cfg.sdr == "bladerf" and cfg.source == "live":
+                        from bladerf_source import BladerfViewSource, open_bladerf_view_radio
+                        source = BladerfViewSource(
+                            lambda: open_bladerf_view_radio(
+                                cfg.bladerf_gain_db, viewcfg.view_sample_rate_hz,
+                                viewcfg.view_sample_rate_hz),
+                            viewcfg.view_sample_rate_hz)
+                        def _run_blade_view(freq, stop, max_s):
+                            _reset_bladerf_backend()   # free the sweep's bladeRF before the view opens it
+                            return stream_demod.run_stream_source(
+                                viewcfg, source, freq, stop, max_s, encoder,
+                                channel_of=nearest_channel)
+                        run = _run_blade_view
+                        reset = source.close     # on exit the next sweep cycle reopens the backend
                     else:
                         run = lambda freq, stop, max_s: stream_demod.run_stream_persistent(
                             viewcfg, freq, stop, max_s, encoder,
@@ -326,6 +340,9 @@ def main() -> None:
                 LOG.info("entering SDR view @ %.1f MHz (sweep paused)", req)
                 view.run_view(req)
                 LOG.info("SDR view ended; sweep resumes")
+                continue
+            if not cfg.scan_enabled:
+                time.sleep(0.2)          # viewer-only: no sweep, just await view commands
                 continue
             payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher,
                                 emitter=emitter, controller=controller,
