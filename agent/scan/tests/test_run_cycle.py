@@ -683,3 +683,14 @@ def test_main_serves_pending_view_even_when_scan_disabled(monkeypatch):
         main.main()
     assert fakes and fakes[0].entered == [(5865.0, None)]   # pending view served despite scan off
     assert cycles[0] == 0                            # sweep never ran
+
+
+def test_view_lpf_clamp():
+    from main import _view_lpf
+    assert _view_lpf(3, 8e6) == 3e6           # in-range: bw MHz -> Hz
+    assert _view_lpf(10, 8e6) == 4e6          # above fs/2 -> clamped to fs/2
+    assert _view_lpf(0.1, 8e6) == 0.5e6       # below 0.5 MHz -> floor
+    assert _view_lpf(None, 8e6) is None       # None -> caller defaults
+    assert _view_lpf("x", 8e6) is None        # non-number -> None
+    assert _view_lpf(2, 6e6) == 2e6           # hackrf fs=6 MS/s, in-range
+    assert _view_lpf(5, 6e6) == 3e6           # above fs/2 (3 MHz) -> 3e6
