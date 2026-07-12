@@ -267,7 +267,7 @@ class ThresholdController:
             LOG.exception("scancfg announce failed")
 ```
 
-Note the `_defaults` snapshot: it is taken at construction. main.py (Task 3) constructs the controller AFTER `load_thresholds` overlays the file, so reset returns to the *file/env* baseline the operator last persisted-then-reset-from is the startup value — that is acceptable and matches "reset to what the unit booted with". (If a pure env-default reset is later wanted, snapshot before load; out of scope here.)
+Note the `_defaults` snapshot: it is taken at construction. **main.py (Task 3, as shipped) constructs the controller BEFORE `load_thresholds` overlays the persisted file**, so `_defaults` = the factory/env config and a dashboard "Reset" restores factory sensitivity (NOT the last-saved values). Do NOT reorder `load_thresholds` before the controller construction — that would make Reset a no-op after a restart (fixed in commit `9162136`).
 
 - [ ] **Step 4: Run tests**
 
