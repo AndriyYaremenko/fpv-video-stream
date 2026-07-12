@@ -188,6 +188,7 @@ ctx.handlers = {
   },
   viewerRowClick,
   syncViewerPlayers,
+  onThresholds: (id, obj) => { if (!PREVIEW) scanClient.publishThresholds(id, obj); },
 };
 
 // ---- topbar + sidebar wiring ----

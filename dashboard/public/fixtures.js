@@ -31,6 +31,7 @@ export const FIXTURES = {
     video:{ ts:NOW-5, center_mhz:5800, standard:'PAL', line_hz:15625, sync_snr_db:18.3, frame_png_b64:'' },
     rxtune:{ ts:NOW, freq_mhz:5865, channel:'A1', mode:'scan', targets:[] },
     view:{ ts:NOW, active:true, freq_mhz:5800, until_ts:NOW+600, error:null, stream:'bladerf-view', bandwidth_mhz:3 },
+    scancfg: { ts: NOW, snr_threshold_db: 20, min_bandwidth_mhz: 5, occupancy_snr_db: 10, carrier_snr_db: 15, carrier_min_bw_mhz: 0.5 },
   }
   , hackrf: {
     online: true, status_ts: NOW,
