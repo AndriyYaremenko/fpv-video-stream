@@ -34,14 +34,14 @@ function update(root, ctx) {
   const cards = ctx.scanners().length ? viewerCards(store) : [];
   const rows = viewerRows(ctx.viewerState(), nowS);
 
-  renderList(root.querySelector('.viewer-list'), cards, rows, nowS, store);
+  renderList(root.querySelector('.viewer-list'), cards, rows, nowS);
   reconcileCards(root.querySelector('.viewer-cards'), cards, ctx, rows, store);
 
   ctx.handlers.syncViewerPlayers();   // (re)bind WHEP players to the mounted #viewer-video-<id>
 }
 
 // ---- left: merged detection list; each row carries a ▶ button per online viewer ----
-function renderList(list, cards, rows, nowS, store) {
+function renderList(list, cards, rows, nowS) {
   // Highlight rows whose freq matches ANY active view session.
   const activeFreqs = cards.filter((c) => c.view && c.view.active).map((c) => c.view.freq_mhz);
   list.innerHTML = '';
@@ -78,7 +78,12 @@ function reconcileCards(wrap, cards, ctx, rows, store) {
   const empty = wrap.querySelector('.viewer-cards-empty'); if (empty) empty.remove();
   for (const c of cards) {
     let card = document.getElementById(`viewer-card-${c.id}`);
-    if (!card) { card = buildCard(c, ctx, rows); wrap.appendChild(card); }
+    if (!card) {
+      card = buildCard(c, ctx, rows);
+      const after = [...wrap.children].find(
+        (ch) => ch.id && ch.id.startsWith('viewer-card-') && ch.id.slice('viewer-card-'.length) > c.id);
+      wrap.insertBefore(card, after || null);
+    }
     card.__ctxRows = rows;                                  // fresh rows for the steppers' click reads
     updateCard(card, c, store);
   }
