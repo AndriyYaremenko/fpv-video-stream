@@ -19,7 +19,9 @@ export function render(container, ctx) {
       if (!btn) return;
       const freq = Number(btn.dataset.vwfreq);
       if (!Number.isFinite(freq)) return;
-      ctx.handlers.viewerRowClick(freq, btn.dataset.vwband || '', btn.dataset.vid || '');
+      const bwEl = document.querySelector(`#viewer-card-${btn.dataset.vid} .vc-bw`);
+      const bw = bwEl && bwEl.value !== '' ? Number(bwEl.value) : undefined;
+      ctx.handlers.viewerRowClick(freq, btn.dataset.vwband || '', btn.dataset.vid || '', bw);
     });
     root.appendChild(list);
     root.appendChild(el('div', 'viewer-cards'));
@@ -101,6 +103,7 @@ function buildCard(c, ctx, rows) {
       <button type="button" class="btn vc-step" data-dir="-1">◀</button>
       <input class="vc-freq" type="number" min="100" max="6000" step="1" placeholder="МГц" />
       <button type="button" class="btn vc-step" data-dir="1">▶</button>
+      <input class="vc-bw" type="number" min="0.5" max="20" step="0.5" placeholder="BW" title="смуга відео, МГц" />
       <button type="button" class="btn vc-play">▶ дивитись</button>
       <button type="button" class="btn vc-stop" hidden>■ свіп</button>
       <span class="vc-badge view-badge"></span>
@@ -115,13 +118,15 @@ function buildCard(c, ctx, rows) {
     const v = Number(freqInput.value);
     return Number.isFinite(v) ? v : null;
   };
+  const bwInput = card.querySelector('.vc-bw');
+  const curBw = () => { const v = Number(bwInput.value); return Number.isFinite(v) && v > 0 ? v : undefined; };
   card.querySelectorAll('.vc-step').forEach((b) => b.addEventListener('click', () => {
     const f = stepDetectionFreq(card.__ctxRows, curFreq(), Number(b.dataset.dir));
-    if (f != null) { freqInput.value = String(f); ctx.onViewStart(c.id, f); }
+    if (f != null) { freqInput.value = String(f); ctx.onViewStart(c.id, f, curBw()); }
   }));
   card.querySelector('.vc-play').addEventListener('click', () => {
     const f = Number(freqInput.value);
-    if (Number.isFinite(f) && f >= 100 && f <= 6000) ctx.onViewStart(c.id, f);
+    if (Number.isFinite(f) && f >= 100 && f <= 6000) ctx.onViewStart(c.id, f, curBw());
   });
   card.querySelector('.vc-stop').addEventListener('click', () => ctx.onViewStop(c.id));
 
@@ -161,6 +166,9 @@ function updateCard(card, c, store) {
   card.querySelector('.vc-err').textContent = (view && view.error) || '';
   card.querySelector('.vc-stop').hidden = !(view && view.active);
   card.classList.toggle('is-active', !!(view && view.active));
+
+  const bwInput = card.querySelector('.vc-bw');
+  bwInput.placeholder = (view && view.bandwidth_mhz != null) ? `BW ${view.bandwidth_mhz}` : 'BW';
 
   const live = store[c.id] || null;
   const band = live ? pickBand(live, view) : null;

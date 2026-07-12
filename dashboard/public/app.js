@@ -120,7 +120,7 @@ const ctx = {
     } catch { return { frames: [] }; }
   },
   onScanCmd: (id, cmd) => { if (!PREVIEW) scanClient.publishCommand(id, cmd); },
-  onViewStart: (id, freq) => { if (!PREVIEW) scanClient.publishView(id, 'start', freq); },
+  onViewStart: (id, freq, bw) => { if (!PREVIEW) scanClient.publishView(id, 'start', freq, bw); },
   onViewStop: (id) => { if (!PREVIEW) scanClient.publishView(id, 'stop'); },
   requestRender: () => router.renderActive(),
   handlers: {},
@@ -143,13 +143,13 @@ const modals = createModals(ctx);
 // FPV Viewer row/button click: start the view on the explicitly-chosen viewerId (the row
 // renders a button per online viewer); fall back to pickViewer if that id isn't a live viewer.
 // 5.8G also nudges the RX5808 to the nearest hardware channel (unchanged).
-function viewerRowClick(freq, band, viewerId) {
+function viewerRowClick(freq, band, viewerId, bw) {
   if (PREVIEW) return;
   const store = scanClient.store;
   const chosen = (viewerId && store[viewerId] && store[viewerId].online && store[viewerId].view) ? viewerId : null;
   const vid = chosen || pickViewer(store);
   if (!vid || !Number.isFinite(freq) || freq < 100 || freq > 6000) return;
-  scanClient.publishView(vid, 'start', freq);
+  scanClient.publishView(vid, 'start', freq, bw);
   if (band === '5.8G') {
     const rxId = pickRxScanner(store);
     const ch = nearestRxChannel(freq);
