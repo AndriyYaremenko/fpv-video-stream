@@ -32,6 +32,13 @@ _BLADERF_DEVICE = None
 _BLADERF_FAIL_LIMIT = 3
 
 
+def _view_lpf(bw_mhz, fs_hz):
+    """BW (MHz) -> demod lowpass cutoff (Hz), clamped to [0.5 MHz, fs/2]. None -> None (caller defaults)."""
+    if not isinstance(bw_mhz, (int, float)):
+        return None
+    return max(0.5e6, min(float(bw_mhz) * 1e6, fs_hz / 2.0))
+
+
 def _get_bladerf_backend(cfg: Config):
     global _BLADERF_BACKEND, _BLADERF_DEVICE
     if _BLADERF_BACKEND is None:
@@ -275,9 +282,12 @@ def main() -> None:
                         source = HackrfSource(
                             lambda: open_hackrf_radio(cfg.lna_gain, cfg.vga_gain, cfg.amp_enable),
                             viewcfg.view_sample_rate_hz)
-                        run = lambda freq, stop, max_s: stream_demod.run_stream_source(
-                            viewcfg, source, freq, stop, max_s, encoder,
-                            channel_of=nearest_channel)
+                        def _run_hackrf_view(freq, bw, stop, max_s):
+                            return stream_demod.run_stream_source(
+                                viewcfg, source, freq, stop, max_s, encoder,
+                                channel_of=nearest_channel,
+                                lpf_cutoff_hz=_view_lpf(bw, viewcfg.view_sample_rate_hz))
+                        run = _run_hackrf_view
                         reset = source.close     # release the device for the sweep; no USB re-enum per session
                     elif cfg.sdr == "bladerf" and cfg.source == "live":
                         from bladerf_source import BladerfViewSource, open_bladerf_view_radio
@@ -286,11 +296,12 @@ def main() -> None:
                                 cfg.bladerf_gain_db, viewcfg.view_sample_rate_hz,
                                 viewcfg.view_sample_rate_hz),
                             viewcfg.view_sample_rate_hz)
-                        def _run_blade_view(freq, stop, max_s):
+                        def _run_blade_view(freq, bw, stop, max_s):
                             _reset_bladerf_backend()   # free the sweep's bladeRF before the view opens it
                             return stream_demod.run_stream_source(
                                 viewcfg, source, freq, stop, max_s, encoder,
-                                channel_of=nearest_channel)
+                                channel_of=nearest_channel,
+                                lpf_cutoff_hz=_view_lpf(bw, viewcfg.view_sample_rate_hz))
                         run = _run_blade_view
                         reset = source.close     # on exit the next sweep cycle reopens the backend
                     else:
@@ -337,7 +348,7 @@ def main() -> None:
         try:
             req = view.pending() if view is not None else None
             if req is not None:
-                LOG.info("entering SDR view @ %.1f MHz (sweep paused)", req)
+                LOG.info("entering SDR view @ %.1f MHz (sweep paused)", req[0])
                 view.run_view(req)
                 LOG.info("SDR view ended; sweep resumes")
                 continue

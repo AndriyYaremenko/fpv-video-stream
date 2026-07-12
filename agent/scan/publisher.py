@@ -142,11 +142,13 @@ class MqttPublisher:
             self.QOS_DETECTION,
         )
 
-    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None, stream=None):
+    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None, stream=None,
+                     bandwidth_mhz=None):
         self._publish(
             self._t_view,
             {"scanner_id": self.scanner_id, "ts": ts, "active": bool(active),
-             "freq_mhz": freq_mhz, "until_ts": until_ts, "error": error, "stream": stream},
+             "freq_mhz": freq_mhz, "until_ts": until_ts, "error": error, "stream": stream,
+             "bandwidth_mhz": bandwidth_mhz},
             self.QOS_DETECTION,
         )
 

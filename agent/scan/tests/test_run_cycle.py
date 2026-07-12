@@ -510,9 +510,9 @@ def test_main_enters_pending_view_without_the_idle_sleep(monkeypatch):
         def pending(self):
             if self.pending_flag:
                 self.pending_flag = False
-                return 5865.0
+                return (5865.0, None)
             return None
-        def run_view(self, freq): self.entered.append(freq)
+        def run_view(self, req): self.entered.append(req)
     import view_controller as vc_mod
     fakes = []
     def _mk(*a, **k):
@@ -535,7 +535,7 @@ def test_main_enters_pending_view_without_the_idle_sleep(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         main.main()
 
-    assert fakes and fakes[0].entered == [5865.0]   # the pending view WAS entered
+    assert fakes and fakes[0].entered == [(5865.0, None)]   # the pending view WAS entered
     assert sleeps == []                             # ...without the 1 s idle sleep first
 
 
@@ -661,15 +661,15 @@ def test_main_serves_pending_view_even_when_scan_disabled(monkeypatch):
     class _FakeView:
         def __init__(self, *a, **k):
             self.entered = []
-            self._p = [5865.0]
+            self._p = [(5865.0, None)]
             fakes.append(self)
         def set_command(self, d): pass
         def announce(self): pass
         def has_pending(self): return False
         def pending(self):
             return self._p.pop(0) if self._p else None
-        def run_view(self, freq):
-            self.entered.append(freq)
+        def run_view(self, req):
+            self.entered.append(req)
             raise KeyboardInterrupt()          # end the loop once the view is entered
     monkeypatch.setattr(vc_mod, "ViewController", _FakeView)
 
@@ -681,5 +681,5 @@ def test_main_serves_pending_view_even_when_scan_disabled(monkeypatch):
 
     with pytest.raises(KeyboardInterrupt):
         main.main()
-    assert fakes and fakes[0].entered == [5865.0]   # pending view served despite scan off
+    assert fakes and fakes[0].entered == [(5865.0, None)]   # pending view served despite scan off
     assert cycles[0] == 0                            # sweep never ran
