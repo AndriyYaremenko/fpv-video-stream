@@ -22,13 +22,13 @@ class ViewController:
 
     def __init__(self, publisher, run_stream, max_s=600.0, reset=None, clock=None, stream=None, on_idle=None):
         self._publisher = publisher
-        self._run_stream = run_stream        # fn(freq_mhz, stop_event, max_s) -> error|None
+        self._run_stream = run_stream        # fn(freq_mhz, bandwidth_mhz, stop_event, max_s) -> error|None
         self._max_s = max_s
         self._reset = reset or (lambda: None)
         self._on_idle = on_idle or (lambda: None)
         self._clock = clock or time.time
         self._stream = stream                # WHEP stream name, echoed in every state publish
-        self._last = (False, None, None, None)   # (active, freq_mhz, until_ts, error)
+        self._last = (False, None, None, None, None)   # (active, freq_mhz, until_ts, error, bandwidth_mhz)
         self._lock = threading.Lock()
         self._pending = None
         self._stop = threading.Event()
@@ -47,8 +47,10 @@ class ViewController:
         if not isinstance(freq, (int, float)) or not (FREQ_MIN_MHZ <= float(freq) <= FREQ_MAX_MHZ):
             LOG.warning("view: ignoring start with bad freq_mhz %r", freq)
             return
+        bw = data.get("bandwidth_mhz")
+        bw = float(bw) if isinstance(bw, (int, float)) else None
         with self._lock:
-            self._pending = float(freq)
+            self._pending = (float(freq), bw)
         self._stop.set()                 # active session -> retune now; idle -> cleared on entry
 
     def pending(self):
@@ -64,19 +66,19 @@ class ViewController:
     def announce(self):
         """(Re)publish the last-known retained state — startup capability announce
         (also clears a stale retained active:true after a crash) and reconnect refresh."""
-        active, freq_mhz, until_ts, error = self._last
-        self._pub(int(self._clock()), active, freq_mhz, until_ts, error)
+        active, freq_mhz, until_ts, error, bandwidth_mhz = self._last
+        self._pub(int(self._clock()), active, freq_mhz, until_ts, error, bandwidth_mhz)
 
-    def run_view(self, freq_mhz):
-        freq = freq_mhz
+    def run_view(self, req):
+        freq, bw = req
         error = None
         try:
             while True:
                 self._stop.clear()       # a stale stop (or our own retune flag) must not kill this session
                 ts = int(self._clock())
-                self._pub(ts, True, freq, ts + int(self._max_s))
+                self._pub(ts, True, freq, ts + int(self._max_s), bandwidth_mhz=bw)
                 try:
-                    error = self._run_stream(freq, self._stop, self._max_s)
+                    error = self._run_stream(freq, bw, self._stop, self._max_s)
                 except Exception as e:
                     LOG.exception("view stream crashed")
                     error = str(e)
@@ -89,14 +91,14 @@ class ViewController:
                     except Exception:
                         LOG.exception("view: device reset failed")
                     error = None
-                LOG.info("view retune -> %.1f MHz", nxt)
-                freq = nxt
+                freq, bw = nxt
+                LOG.info("view retune -> %.1f MHz (bw=%s)", freq, bw)
         finally:
             try:
                 self._on_idle()          # persistent engine: blank the stream to black
             except Exception:
                 LOG.exception("view: on_idle failed")
-            self._pub(int(self._clock()), False, None, None, error)
+            self._pub(int(self._clock()), False, None, None, error, bandwidth_mhz=None)
             try:
                 self._reset()            # leave the device clean for the next sweep
             except Exception:
@@ -104,13 +106,13 @@ class ViewController:
             self._stop.clear()
         return error
 
-    def _pub(self, ts, active, freq_mhz, until_ts, error=None):
-        self._last = (active, freq_mhz, until_ts, error)
+    def _pub(self, ts, active, freq_mhz, until_ts, error=None, bandwidth_mhz=None):
+        self._last = (active, freq_mhz, until_ts, error, bandwidth_mhz)
         if self._publisher is None:
             return
         try:
             self._publisher.publish_view(ts, active, freq_mhz=freq_mhz,
                                          until_ts=until_ts, error=error,
-                                         stream=self._stream)
+                                         stream=self._stream, bandwidth_mhz=bandwidth_mhz)
         except Exception:
             LOG.exception("view state publish failed")

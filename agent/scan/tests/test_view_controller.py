@@ -5,15 +5,16 @@ class _Pub:
     def __init__(self):
         self.calls = []
 
-    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None, stream=None):
+    def publish_view(self, ts, active, freq_mhz=None, until_ts=None, error=None, stream=None, bandwidth_mhz=None):
         self.calls.append({"ts": ts, "active": active, "freq_mhz": freq_mhz,
-                           "until_ts": until_ts, "error": error, "stream": stream})
+                           "until_ts": until_ts, "error": error, "stream": stream,
+                           "bandwidth_mhz": bandwidth_mhz})
 
 
 def test_set_command_validates_and_pending_consumes_once():
     vc = ViewController(None, run_stream=lambda *a: None)
     vc.set_command({"view": "start", "freq_mhz": 5865})
-    assert vc.pending() == 5865.0
+    assert vc.pending() == (5865.0, None)
     assert vc.pending() is None
     for bad in ({"view": "start"}, {"view": "start", "freq_mhz": "x"},
                 {"view": "start", "freq_mhz": 50}, {"view": "start", "freq_mhz": 9000},
@@ -22,47 +23,71 @@ def test_set_command_validates_and_pending_consumes_once():
         assert vc.pending() is None
 
 
+def test_set_command_parses_bandwidth():
+    vc = ViewController(None, run_stream=lambda *a: None)
+    vc.set_command({"view": "start", "freq_mhz": 5865, "bandwidth_mhz": 3.5})
+    assert vc.pending() == (5865.0, 3.5)
+    vc.set_command({"view": "start", "freq_mhz": 5865})              # no bw -> None
+    assert vc.pending() == (5865.0, None)
+    vc.set_command({"view": "start", "freq_mhz": 5865, "bandwidth_mhz": "x"})  # bad bw -> None
+    assert vc.pending() == (5865.0, None)
+
+
 def test_run_view_lifecycle_publishes_and_resets():
     pub = _Pub()
     resets = []
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         assert freq == 5865.0 and max_s == 60.0 and not stop.is_set()
         return None
 
     vc = ViewController(pub, stream, max_s=60.0,
                         reset=lambda: resets.append(1), clock=lambda: 1000.0)
-    assert vc.run_view(5865.0) is None
+    assert vc.run_view((5865.0, None)) is None
     start, end = pub.calls
     assert start["active"] is True and start["freq_mhz"] == 5865.0 and start["until_ts"] == 1060
     assert end["active"] is False and end["error"] is None and end["freq_mhz"] is None
     assert resets == [1]
 
 
+def test_run_view_threads_bandwidth_to_stream_and_publish():
+    pub = _Pub()
+    seen = []
+    def stream(freq, bw, stop, max_s):
+        seen.append((freq, bw))
+        return None
+    vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None, clock=lambda: 1000.0)
+    vc.run_view((5865.0, 2.0))
+    assert seen == [(5865.0, 2.0)]
+    start = [c for c in pub.calls if c["active"]][0]
+    assert start["bandwidth_mhz"] == 2.0
+    assert pub.calls[-1]["bandwidth_mhz"] is None      # final inactive publish clears bw
+
+
 def test_run_view_reports_error_and_crash():
     pub = _Pub()
-    vc = ViewController(pub, lambda f, s, m: "ffmpeg exited", max_s=60.0, reset=lambda: None)
-    assert vc.run_view(5000.0) == "ffmpeg exited"
+    vc = ViewController(pub, lambda f, bw, s, m: "ffmpeg exited", max_s=60.0, reset=lambda: None)
+    assert vc.run_view((5000.0, None)) == "ffmpeg exited"
     assert pub.calls[-1]["error"] == "ffmpeg exited"
 
-    def boom(f, s, m):
+    def boom(f, bw, s, m):
         raise RuntimeError("boom")
 
     vc2 = ViewController(pub, boom, max_s=60.0, reset=lambda: None)
-    assert "boom" in vc2.run_view(5000.0)
+    assert "boom" in vc2.run_view((5000.0, None))
     assert "boom" in pub.calls[-1]["error"]
 
 
 def test_stale_stop_is_cleared_before_a_new_session():
     seen = {}
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         seen["preset"] = stop.is_set()
         return None
 
     vc = ViewController(_Pub(), stream, max_s=60.0, reset=lambda: None)
     vc.set_command({"view": "stop"})               # stop arrives while idle
-    vc.run_view(5000.0)
+    vc.run_view((5000.0, None))
     assert seen["preset"] is False                 # run_view cleared it
 
 
@@ -79,19 +104,20 @@ def test_announce_publishes_retained_inactive_state_with_stream():
     vc = ViewController(pub, lambda *a: None, stream="hackrf-view", clock=lambda: 111.0)
     vc.announce()
     assert pub.calls == [{"ts": 111, "active": False, "freq_mhz": None,
-                          "until_ts": None, "error": None, "stream": "hackrf-view"}]
+                          "until_ts": None, "error": None, "stream": "hackrf-view",
+                          "bandwidth_mhz": None}]
 
 
 def test_announce_mid_session_republishes_the_active_state():
     pub = _Pub()
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         vc.announce()                    # simulates an MQTT reconnect during a session
         return None
 
     vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None,
                         clock=lambda: 1000.0, stream="hackrf-view")
-    vc.run_view(5865.0)
+    vc.run_view((5865.0, None))
     actives = [c for c in pub.calls if c["active"]]
     assert len(actives) == 2             # session start + reconnect re-announce
     assert actives[1]["freq_mhz"] == 5865.0 and actives[1]["until_ts"] == 1060
@@ -103,7 +129,7 @@ def test_has_pending_is_non_consuming():
     assert vc.has_pending() is False
     vc.set_command({"view": "start", "freq_mhz": 5865})
     assert vc.has_pending() is True
-    assert vc.pending() == 5865.0
+    assert vc.pending() == (5865.0, None)
     assert vc.has_pending() is False
 
 
@@ -111,7 +137,7 @@ def test_run_view_retunes_in_place_on_start_command():
     pub = _Pub()
     freqs = []
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         freqs.append(freq)
         if len(freqs) == 1:
             vc.set_command({"view": "start", "freq_mhz": 1280})
@@ -119,7 +145,7 @@ def test_run_view_retunes_in_place_on_start_command():
         return None
 
     vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None, clock=lambda: 1000.0)
-    assert vc.run_view(5865.0) is None
+    assert vc.run_view((5865.0, None)) is None
     assert freqs == [5865.0, 1280.0]     # second session started WITHOUT leaving run_view
     actives = [c for c in pub.calls if c["active"]]
     assert [c["freq_mhz"] for c in actives] == [5865.0, 1280.0]
@@ -132,7 +158,7 @@ def test_retune_after_stream_error_resets_device_and_keeps_retune():
     calls = []
     resets = []
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         calls.append(freq)
         if len(calls) == 1:
             vc.set_command({"view": "start", "freq_mhz": 2400})
@@ -140,7 +166,7 @@ def test_retune_after_stream_error_resets_device_and_keeps_retune():
         return None
 
     vc = ViewController(pub, stream, max_s=60.0, reset=lambda: resets.append(len(calls)))
-    assert vc.run_view(5865.0) is None                   # last session ended clean
+    assert vc.run_view((5865.0, None)) is None            # last session ended clean
     assert calls == [5865.0, 2400.0]
     assert resets and resets[0] == 1                     # reset BETWEEN error and retune
     assert pub.calls[-1]["error"] is None                # final state carries the last error only
@@ -149,12 +175,12 @@ def test_retune_after_stream_error_resets_device_and_keeps_retune():
 def test_stop_command_during_session_exits_to_sweep():
     pub = _Pub()
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         vc.set_command({"view": "stop"})
         return None
 
     vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None)
-    vc.run_view(5000.0)
+    vc.run_view((5000.0, None))
     assert pub.calls[-1]["active"] is False
     assert vc.has_pending() is False
 
@@ -162,13 +188,13 @@ def test_stop_command_during_session_exits_to_sweep():
 def test_stop_after_pending_start_cancels_the_retune():
     pub = _Pub()
 
-    def stream(freq, stop, max_s):
+    def stream(freq, bw, stop, max_s):
         vc.set_command({"view": "start", "freq_mhz": 1280})
         vc.set_command({"view": "stop"})           # stop arrives after the queued retune
         return None
 
     vc = ViewController(pub, stream, max_s=60.0, reset=lambda: None)
-    vc.run_view(5865.0)
+    vc.run_view((5865.0, None))
     actives = [c for c in pub.calls if c["active"]]
     assert [c["freq_mhz"] for c in actives] == [5865.0]    # no retune happened
     assert pub.calls[-1]["active"] is False
@@ -177,16 +203,16 @@ def test_stop_after_pending_start_cancels_the_retune():
 
 def test_run_view_calls_on_idle_once_at_session_end():
     order = []
-    vc = ViewController(_Pub(), lambda f, s, m: None, max_s=60.0,
+    vc = ViewController(_Pub(), lambda f, bw, s, m: None, max_s=60.0,
                         reset=lambda: order.append("reset"),
                         on_idle=lambda: order.append("idle"))
-    vc.run_view(5000.0)
+    vc.run_view((5000.0, None))
     assert order == ["idle", "reset"]
 
 
 def test_on_idle_failure_does_not_break_session_end():
     def boom():
         raise RuntimeError("boom")
-    vc = ViewController(_Pub(), lambda f, s, m: None, max_s=60.0,
+    vc = ViewController(_Pub(), lambda f, bw, s, m: None, max_s=60.0,
                         reset=lambda: None, on_idle=boom)
-    assert vc.run_view(5000.0) is None             # error swallowed, session ends clean
+    assert vc.run_view((5000.0, None)) is None             # error swallowed, session ends clean
