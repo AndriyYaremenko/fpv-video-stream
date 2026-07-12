@@ -12,10 +12,13 @@ export function buildCommand(mode, channel) {
   return { mode, channel: channel || null };
 }
 
-// Build an SDR view command for fpv/<id>/rxcmd ({view:'start',freq_mhz} | {view:'stop'}).
-export function buildViewCommand(action, freqMhz) {
+// Build an SDR view command for fpv/<id>/rxcmd ({view:'start',freq_mhz,bandwidth_mhz?} | {view:'stop'}).
+export function buildViewCommand(action, freqMhz, bwMhz) {
   const cmd = { view: action === 'stop' ? 'stop' : 'start' };
-  if (cmd.view === 'start') cmd.freq_mhz = Number(freqMhz);
+  if (cmd.view === 'start') {
+    cmd.freq_mhz = Number(freqMhz);
+    if (bwMhz != null && bwMhz !== '' && Number.isFinite(Number(bwMhz))) cmd.bandwidth_mhz = Number(bwMhz);
+  }
   return cmd;
 }
 
@@ -67,6 +70,7 @@ export function reduce(store, topic, payload, opts = {}) {
       until_ts: data.until_ts == null ? null : Number(data.until_ts),
       error: data.error || null,
       stream: data.stream || null,
+      bandwidth_mhz: data.bandwidth_mhz == null ? null : Number(data.bandwidth_mhz),
     };
   } else if (kind === 'telemetry') {
     s.telemetry = {
@@ -129,11 +133,11 @@ export class MqttScanClient {
 
   // SDR view command — same rxcmd topic (ACL already allows it), but NOT retained:
   // a retained start would replay and re-enter view mode on every Pi reconnect.
-  publishView(id, action, freqMhz) {
+  publishView(id, action, freqMhz, bwMhz) {
     if (!this.client || !id) return;
     if (action === 'start' && !Number.isFinite(Number(freqMhz))) return;
     this.client.publish(
-      `fpv/${id}/rxcmd`, JSON.stringify(buildViewCommand(action, freqMhz)),
+      `fpv/${id}/rxcmd`, JSON.stringify(buildViewCommand(action, freqMhz, bwMhz)),
       { qos: 1, retain: false },
     );
   }

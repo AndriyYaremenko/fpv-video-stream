@@ -206,6 +206,26 @@ def test_publish_rxtune_is_noop_when_not_connected():
     p.publish_rxtune(1, 5865, "A1", "scan", [])        # must not raise
 
 
+def test_publish_view_includes_bandwidth():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_view(500, True, freq_mhz=5865, until_ts=1600, stream="hackrf-view", bandwidth_mhz=2.5)
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/view"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    body = json.loads(payload)
+    assert body["bandwidth_mhz"] == 2.5
+    assert body["freq_mhz"] == 5865 and body["stream"] == "hackrf-view" and body["active"] is True
+
+
+def test_publish_view_bandwidth_defaults_null():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_view(500, False)                          # no bw -> present as null
+    body = json.loads([m for m in fake.published if m[0] == "fpv/hackrf/view"][-1][1])
+    assert body["bandwidth_mhz"] is None
+
+
 class _Msg:
     def __init__(self, payload):
         self.payload = payload
@@ -288,7 +308,8 @@ def test_publish_view_contract():
     topic, data, qos, retain = p._client.published[0]
     assert topic == "fpv/scan-01/view" and qos == 1 and retain is True
     assert data == {"scanner_id": "scan-01", "ts": 123, "active": True,
-                    "freq_mhz": 5865.0, "until_ts": 723, "error": None, "stream": None}
+                    "freq_mhz": 5865.0, "until_ts": 723, "error": None, "stream": None,
+                    "bandwidth_mhz": None}
     p.publish_view(124, False, error="ffmpeg exited")
     data2 = p._client.published[1][1]
     assert data2["active"] is False and data2["error"] == "ffmpeg exited"

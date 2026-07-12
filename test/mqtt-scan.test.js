@@ -87,7 +87,7 @@ test('reduce: fpv/<id>/view updates the view state incl. stream', () => {
     error: null, stream: 'hackrf-view',
   }));
   assert.deepEqual(s.hackrf.view,
-    { ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null, stream: 'hackrf-view' });
+    { ts: 5, active: true, freq_mhz: 5865, until_ts: 605, error: null, stream: 'hackrf-view', bandwidth_mhz: null });
   reduce(s, 'fpv/hackrf/view', JSON.stringify({ ts: 6, active: false, error: 'ffmpeg exited' }));
   assert.equal(s.hackrf.view.active, false);
   assert.equal(s.hackrf.view.freq_mhz, null);
@@ -95,8 +95,23 @@ test('reduce: fpv/<id>/view updates the view state incl. stream', () => {
   assert.equal(s.hackrf.view.error, 'ffmpeg exited');
 });
 
+test('reduce view carries bandwidth_mhz (null when absent)', () => {
+  const store = {};
+  reduce(store, 'fpv/hackrf/view', JSON.stringify({ ts: 1, active: true, freq_mhz: 5865, stream: 'hackrf-view', bandwidth_mhz: 2.5 }));
+  assert.equal(store.hackrf.view.bandwidth_mhz, 2.5);
+  reduce(store, 'fpv/bladerf/view', JSON.stringify({ ts: 1, active: false, stream: 'bladerf-view' }));
+  assert.equal(store.bladerf.view.bandwidth_mhz, null);
+});
+
 test('buildViewCommand: start carries freq, stop does not', () => {
   assert.deepEqual(buildViewCommand('start', 5865), { view: 'start', freq_mhz: 5865 });
+  assert.deepEqual(buildViewCommand('stop'), { view: 'stop' });
+});
+
+test('buildViewCommand carries bandwidth_mhz when given, omits when not', () => {
+  assert.deepEqual(buildViewCommand('start', 5865, 3), { view: 'start', freq_mhz: 5865, bandwidth_mhz: 3 });
+  assert.deepEqual(buildViewCommand('start', 5865), { view: 'start', freq_mhz: 5865 });
+  assert.deepEqual(buildViewCommand('start', 5865, ''), { view: 'start', freq_mhz: 5865 }); // empty -> omit
   assert.deepEqual(buildViewCommand('stop'), { view: 'stop' });
 });
 
