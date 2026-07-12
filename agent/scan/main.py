@@ -16,6 +16,7 @@ from reporter import build_payload, write_state, Holder, make_local_server
 from publisher import MqttPublisher
 from device import reset_hackrf
 from models import Spectrum, Candidate, Detection
+from threshold_controller import ThresholdController, load_thresholds
 
 LOG = logging.getLogger("scan")
 
@@ -222,6 +223,7 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
+    load_thresholds(cfg.thresholds_path, cfg)     # operator's saved sensitivity survives restart
     holder = Holder()
     if cfg.local_http_port:
         server = make_local_server(cfg.local_http_host, cfg.local_http_port, holder)
@@ -339,10 +341,24 @@ def main() -> None:
         # Apply dashboard commands (fpv/<id>/rxcmd). Wire BEFORE connect so a retained command —
         # delivered when _on_connect subscribes — is dispatched, not dropped while on_command is unset.
         publisher.on_command = controller.set_command
+    threshold_ctl = None
+    if publisher is not None:
+        threshold_ctl = ThresholdController(cfg, publisher, cfg.scanner_id, cfg.thresholds_path)
+        publisher.on_thresholds_command = threshold_ctl.apply
+    if threshold_ctl is not None:
+        # Compose with any existing on_connected (e.g. the view announce set above) — do not drop it.
+        prev = publisher.on_connected
+        def _on_connected():
+            if prev is not None:
+                prev()
+            threshold_ctl.announce()
+        publisher.on_connected = _on_connected
     if publisher is not None:
         try:
             publisher.connect(int(time.time()))
             LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
+            if threshold_ctl is not None:
+                threshold_ctl.announce()
         except Exception:
             LOG.exception("MQTT connect failed; continuing without publishing")
             publisher = None
