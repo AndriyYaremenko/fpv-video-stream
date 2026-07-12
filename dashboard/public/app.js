@@ -8,7 +8,7 @@ import { createRouter } from '/router.js';
 import { createModals } from '/modals.js';
 import {
   emptyViewer, applyDetections, seedFromJournal,
-  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey, whepRetryDelay,
+  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey, whepRetryDelay, viewerCards,
 } from '/viewer.js';
 import { render as renderDashboard } from '/views/dashboard.js';
 import { render as renderViewer } from '/views/viewer.js';
@@ -29,65 +29,62 @@ let newDetKeys = new Set();
 let prevScanKeys = null;
 let fx = null;                      // FIXTURES, preview only
 
-// ==== FPV Viewer generation-token player ====================================
-// Relocated verbatim (behavior-preserving) from the current main branch's
-// dashboard/public/app.js (renderViewer's player wiring + syncViewerPlayer +
-// startViewerWhep, app.js:327-402). Only the trigger changed: instead of
-// living inside a renderViewer() that ALSO drew the panel HTML, the DOM/list
-// rendering now belongs to views/viewer.js (Task 4); this module keeps just
-// the player lifecycle and exposes it as ctx.handlers.syncViewerPlayer(),
-// called by that view right after it mounts #viewer-video.
-let viewerPlayer = null;      // {player}|null
-let viewerStreamKey = '';     // stream name of the running/starting player
-let viewerRetry = { timer: null, inflight: false };
+// ==== FPV Viewer per-viewer WHEP players (Map keyed by scanner id) ==========
+// One player per online view-capable SDR. Generalizes the single gen-token player:
+// each id owns its own {player, streamKey, retry}; retry-object identity is the
+// generation token, replaced whenever that id's stream changes or the card leaves.
+const viewerPlayers = new Map();   // id -> { player, streamKey, retry:{timer,inflight} }
 
-// Keep the in-panel WHEP player in sync. The persistent engine keeps one path
-// alive across start/stop/retune, so the key is the stream name: connect once
-// when the panel appears, re-kick only if the connection actually died.
-function syncViewerPlayer() {
-  const video = document.getElementById('viewer-video');
-  if (!video) return;                      // view hasn't mounted a player element (e.g. stub screen)
+function syncViewerPlayers() {
   const store = scanClient.store;
-  const hasScanners = ctx.scanners().length > 0;
-  const routeId = hasScanners ? pickViewer(store) : null;          // where NEW starts go
-  const displayId = hasScanners ? (activeViewer(store) || routeId) : null; // whose session the panel shows
-  const view = displayId ? store[displayId].view : null;
-  const want = PREVIEW ? '' : playerKey(view, displayId ? viewStream(store, displayId) : '');
-  if (want !== viewerStreamKey) {
-    if (viewerPlayer && viewerPlayer.player) viewerPlayer.player.close();
-    viewerPlayer = null;
-    viewerStreamKey = want;
-    if (viewerRetry.timer) clearTimeout(viewerRetry.timer);
-    viewerRetry = { timer: null, inflight: false };   // new generation: stale chains go inert
-    if (!want) { video.srcObject = null; return; }
-    startViewerWhep(video, viewStream(store, displayId), viewerRetry, 0);
-    return;
+  const cards = ctx.scanners().length ? viewerCards(store) : [];
+  const wantIds = new Set(cards.map((c) => c.id));
+  for (const [id, st] of viewerPlayers) {          // tear down players whose card is gone
+    if (!wantIds.has(id)) {
+      if (st.player) st.player.close();
+      if (st.retry.timer) clearTimeout(st.retry.timer);
+      viewerPlayers.delete(id);
+    }
   }
-  // Same key, but the player died (encoder respawn, server restart) and the
-  // retries gave up — any resync tick re-kicks the connection.
-  if (want && !viewerPlayer && !viewerRetry.timer && !viewerRetry.inflight) {
-    startViewerWhep(video, viewStream(store, displayId), viewerRetry, 0);
+  for (const c of cards) {
+    const video = document.getElementById(`viewer-video-${c.id}`);
+    if (!video) continue;                          // card not mounted yet
+    let st = viewerPlayers.get(c.id);
+    if (!st) { st = { player: null, streamKey: '', retry: { timer: null, inflight: false } }; viewerPlayers.set(c.id, st); }
+    const want = PREVIEW ? '' : c.stream;
+    if (want !== st.streamKey) {
+      if (st.player) st.player.close();
+      st.player = null;
+      st.streamKey = want;
+      if (st.retry.timer) clearTimeout(st.retry.timer);
+      st.retry = { timer: null, inflight: false };  // new generation for this id
+      if (!want) { video.srcObject = null; continue; }
+      startViewerWhep(c.id, video, c.stream, st.retry, 0);
+      continue;
+    }
+    if (want && !st.player && !st.retry.timer && !st.retry.inflight) {
+      startViewerWhep(c.id, video, c.stream, st.retry, 0);   // same key, died, retries gave up -> re-kick
+    }
   }
 }
 
-// `retry` is this attempt-chain's generation token: minted by syncViewerPlayer,
-// mutated ONLY by its own chain, dead the moment a new generation replaces it.
-async function startViewerWhep(video, stream, retry, attempt) {
-  if (PREVIEW || viewerRetry !== retry || attempt > 40) return;
+async function startViewerWhep(id, video, stream, retry, attempt) {
+  const st0 = viewerPlayers.get(id);
+  if (PREVIEW || !st0 || st0.retry !== retry || attempt > 40) return;
   retry.inflight = true;
   try {
     const p = await startWhep(video, `${cfg.webrtcBase}/${stream}/whep`, cfg.readUser, cfg.readPass,
-      () => { if (viewerPlayer && viewerPlayer.player === p) { p.close(); viewerPlayer = null; } });
+      () => { const s = viewerPlayers.get(id); if (s && s.player === p) { p.close(); s.player = null; } });
     retry.inflight = false;
-    if (viewerRetry !== retry || viewerPlayer) { p.close(); return; }  // superseded or a sibling won
-    viewerPlayer = { player: p };
+    const s = viewerPlayers.get(id);
+    if (!s || s.retry !== retry || s.player) { p.close(); return; }   // superseded or a sibling won
+    s.player = p;
   } catch {
     retry.inflight = false;
-    if (viewerRetry !== retry) return;                 // superseded: stay inert
-    retry.timer = setTimeout(() => {
-      retry.timer = null;
-      startViewerWhep(video, stream, retry, attempt + 1);
-    }, whepRetryDelay(attempt));
+    const s = viewerPlayers.get(id);
+    if (!s || s.retry !== retry) return;                              // superseded: stay inert
+    retry.timer = setTimeout(() => { retry.timer = null; startViewerWhep(id, video, stream, retry, attempt + 1); },
+      whepRetryDelay(attempt));
   }
 }
 
@@ -143,16 +140,14 @@ const routes = [
 const router = createRouter({ routes, ctx });
 const modals = createModals(ctx);
 
-// Dual-action FPV Viewer row click: start the SDR view session at `freq`, and
-// on 5.8G also nudge the RX5808 to the nearest hardware channel (kept from
-// main's spectrumPanel/viewerPanel click handlers). `scannerId` (the reporting
-// scanner, per the ctx contract) is accepted but — matching main's exact
-// behavior — NOT used to pick the target: the target is always whichever
-// view-capable scanner pickViewer() resolves, same as upstream.
-function viewerRowClick(freq, band, scannerId) {
+// FPV Viewer row/button click: start the view on the explicitly-chosen viewerId (the row
+// renders a button per online viewer); fall back to pickViewer if that id isn't a live viewer.
+// 5.8G also nudges the RX5808 to the nearest hardware channel (unchanged).
+function viewerRowClick(freq, band, viewerId) {
   if (PREVIEW) return;
   const store = scanClient.store;
-  const vid = pickViewer(store);
+  const chosen = (viewerId && store[viewerId] && store[viewerId].online && store[viewerId].view) ? viewerId : null;
+  const vid = chosen || pickViewer(store);
   if (!vid || !Number.isFinite(freq) || freq < 100 || freq > 6000) return;
   scanClient.publishView(vid, 'start', freq);
   if (band === '5.8G') {
@@ -192,7 +187,7 @@ ctx.handlers = {
     router.renderLive();
   },
   viewerRowClick,
-  syncViewerPlayer,
+  syncViewerPlayers,
 };
 
 // ---- topbar + sidebar wiring ----
