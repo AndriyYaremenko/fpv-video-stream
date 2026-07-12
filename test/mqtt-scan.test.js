@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyStore, reduce, buildCommand, buildViewCommand } from '../dashboard/public/mqtt-scan.js';
+import { emptyStore, reduce, buildCommand, buildViewCommand, buildThresholdCommand } from '../dashboard/public/mqtt-scan.js';
 
 test('reduce ignores unknown/malformed topics', () => {
   assert.deepEqual(reduce(emptyStore(), 'fpv/x/other', '{}'), {});
@@ -133,4 +133,18 @@ test('telemetry reduce ignores malformed payload', () => {
   const store = {};
   reduce(store, 'fpv/bladerf/telemetry', 'not json');
   assert.equal(store.bladerf === undefined || store.bladerf.telemetry === null, true);
+});
+
+test('buildThresholdCommand carries valid numeric fields, "reset" passthrough', () => {
+  assert.deepEqual(buildThresholdCommand({ snr_threshold_db: 12, min_bandwidth_mhz: '' }),
+    { thresholds: { snr_threshold_db: 12 } });      // empty omitted
+  assert.deepEqual(buildThresholdCommand('reset'), { thresholds: 'reset' });
+});
+
+test('reduce scancfg populates store[id].scancfg', () => {
+  const store = {};
+  reduce(store, 'fpv/bladerf/scancfg', JSON.stringify({ ts: 1, snr_threshold_db: 12, min_bandwidth_mhz: 5,
+    occupancy_snr_db: 10, carrier_snr_db: 15, carrier_min_bw_mhz: 0.5 }));
+  assert.equal(store.bladerf.scancfg.snr_threshold_db, 12);
+  assert.equal(store.bladerf.scancfg.carrier_min_bw_mhz, 0.5);
 });

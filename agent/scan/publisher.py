@@ -52,8 +52,10 @@ class MqttPublisher:
         self._t_rxtune = f"fpv/{scanner_id}/rxtune"
         self._t_rxcmd = f"fpv/{scanner_id}/rxcmd"
         self._t_view = f"fpv/{scanner_id}/view"
+        self._t_scancfg = f"fpv/{scanner_id}/scancfg"
         self.on_command = None          # set by the caller: fn(mode, channel)
         self.on_view_command = None     # set by the caller: fn(dict) — SDR view start/stop
+        self.on_thresholds_command = None   # set by the caller: fn(dict) — sensitivity thresholds
         self.on_connected = None        # set by the caller: fn() — runs after each (re)connect
         self._client = None
 
@@ -105,6 +107,13 @@ class MqttPublisher:
                 except Exception:
                     LOG.exception("on_view_command handler failed")
             return
+        if "thresholds" in data:        # sensitivity command — not routed to the RX5808 handler
+            if self.on_thresholds_command is not None:
+                try:
+                    self.on_thresholds_command(data)
+                except Exception:
+                    LOG.exception("on_thresholds_command handler failed")
+            return
         if self.on_command is None:
             return
         try:
@@ -149,6 +158,13 @@ class MqttPublisher:
             {"scanner_id": self.scanner_id, "ts": ts, "active": bool(active),
              "freq_mhz": freq_mhz, "until_ts": until_ts, "error": error, "stream": stream,
              "bandwidth_mhz": bandwidth_mhz},
+            self.QOS_DETECTION,
+        )
+
+    def publish_scancfg(self, ts, thresholds):
+        self._publish(
+            self._t_scancfg,
+            {"scanner_id": self.scanner_id, "ts": ts, **thresholds},
             self.QOS_DETECTION,
         )
 

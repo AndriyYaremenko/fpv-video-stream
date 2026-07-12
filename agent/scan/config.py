@@ -58,6 +58,7 @@ class Config:
     rx5808_carrier_min_bw_mhz: float = 0.5
     rx5808_osd_file: str = "/run/fpv/rx5808.txt"
     thresholds: Thresholds = field(default_factory=Thresholds)
+    thresholds_path: str = "/var/lib/fpv/thresholds.json"
 
 
 def parse_bands(spec: str) -> Dict[str, Tuple[float, float]]:
@@ -139,4 +140,5 @@ def load_config(env: Optional[dict] = None) -> Config:
         c.rx5808_carrier_min_bw_mhz = float(env["RX5808_CARRIER_MIN_BW_MHZ"])
     if "FPV_RX_OSD_FILE" in env:
         c.rx5808_osd_file = env["FPV_RX_OSD_FILE"]
+    c.thresholds_path = env.get("FPV_THRESHOLDS_PATH", c.thresholds_path)
     return c

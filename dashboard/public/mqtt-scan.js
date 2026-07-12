@@ -22,9 +22,18 @@ export function buildViewCommand(action, freqMhz, bwMhz) {
   return cmd;
 }
 
+export function buildThresholdCommand(obj) {
+  if (obj === 'reset') return { thresholds: 'reset' };
+  const th = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v !== '' && v != null && Number.isFinite(Number(v))) th[k] = Number(v);
+  }
+  return { thresholds: th };
+}
+
 function ensure(store, id) {
   if (!store[id]) {
-    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, bands: {}, latestPsd: {}, waterfalls: {} };
+    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, scancfg: null, bands: {}, latestPsd: {}, waterfalls: {} };
   }
   return store[id];
 }
@@ -33,7 +42,7 @@ function ensure(store, id) {
 // payload may be a JSON string or an already-parsed object. Pure + safe on bad input.
 export function reduce(store, topic, payload, opts = {}) {
   const depth = opts.depth || DEFAULT_DEPTH;
-  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry)$/.exec(topic || '');
+  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry|scancfg)$/.exec(topic || '');
   if (!m) return store;
   const [, id, kind] = m;
   let data;
@@ -86,6 +95,15 @@ export function reduce(store, topic, payload, opts = {}) {
       throttled_ever: data.throttled_ever ?? null,
       throttle_flags: data.throttle_flags ?? null,
     };
+  } else if (kind === 'scancfg') {
+    s.scancfg = {
+      ts: data.ts || 0,
+      snr_threshold_db: data.snr_threshold_db == null ? null : Number(data.snr_threshold_db),
+      min_bandwidth_mhz: data.min_bandwidth_mhz == null ? null : Number(data.min_bandwidth_mhz),
+      occupancy_snr_db: data.occupancy_snr_db == null ? null : Number(data.occupancy_snr_db),
+      carrier_snr_db: data.carrier_snr_db == null ? null : Number(data.carrier_snr_db),
+      carrier_min_bw_mhz: data.carrier_min_bw_mhz == null ? null : Number(data.carrier_min_bw_mhz),
+    };
   } else if (kind === 'spectrum') {
     for (const b of (data.bands || [])) {
       if (!b || b.id == null) continue;
@@ -114,7 +132,7 @@ export class MqttScanClient {
     const client = window.mqtt.connect(url, { username: user, password: pass, reconnectPeriod: 4000 });
     let raf = 0;
     const notify = () => { raf = 0; onChange(this.store); };
-    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry']));
+    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry', 'fpv/+/scancfg']));
     client.on('message', (topic, buf) => {
       try { reduce(this.store, topic, buf.toString(), { depth: this.depth }); } catch { return; }
       if (!raf) raf = requestAnimationFrame(notify);
@@ -140,5 +158,12 @@ export class MqttScanClient {
       `fpv/${id}/rxcmd`, JSON.stringify(buildViewCommand(action, freqMhz, bwMhz)),
       { qos: 1, retain: false },
     );
+  }
+
+  // Detection-sensitivity command — same rxcmd topic, NOT retained (RX5808 owns the retained slot).
+  publishThresholds(id, obj) {
+    if (!this.client || !id) return;
+    this.client.publish(`fpv/${id}/rxcmd`, JSON.stringify(buildThresholdCommand(obj)),
+      { qos: 1, retain: false });
   }
 }

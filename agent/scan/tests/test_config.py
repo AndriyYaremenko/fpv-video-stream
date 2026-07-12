@@ -135,3 +135,8 @@ def test_scan_enabled_default_and_env():
     assert load_config({"SCAN_ENABLED": "0"}).scan_enabled is False
     assert load_config({"SCAN_ENABLED": "false"}).scan_enabled is False
     assert load_config({"SCAN_ENABLED": "1"}).scan_enabled is True
+
+
+def test_thresholds_path_default_and_env():
+    assert load_config({}).thresholds_path == "/var/lib/fpv/thresholds.json"
+    assert load_config({"FPV_THRESHOLDS_PATH": "/tmp/t.json"}).thresholds_path == "/tmp/t.json"

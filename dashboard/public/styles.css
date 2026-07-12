@@ -235,3 +235,12 @@ a{color:var(--aux);}
   .viewer { flex-direction: column; }
   .viewer-list { flex-basis: auto; max-width: none; width: 100%; max-height: 50vh; }
 }
+
+/* ---- Детекції screen — per-scanner sensitivity panel ---- */
+.thresholds-wrap { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.thresholds-panel { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.thresholds-panel .th-head { font-size: 12px; margin-bottom: 6px; color: var(--muted); }
+.thresholds-panel .th-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+.thresholds-panel .th-field { display: flex; flex-direction: column; font-size: 11px; }
+.thresholds-panel .th-in { width: 74px; }
+.thresholds-panel .th-actions { margin-top: 8px; display: flex; gap: 8px; }

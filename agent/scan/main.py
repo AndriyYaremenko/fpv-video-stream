@@ -16,6 +16,7 @@ from reporter import build_payload, write_state, Holder, make_local_server
 from publisher import MqttPublisher
 from device import reset_hackrf
 from models import Spectrum, Candidate, Detection
+from threshold_controller import ThresholdController, load_thresholds
 
 LOG = logging.getLogger("scan")
 
@@ -339,10 +340,29 @@ def main() -> None:
         # Apply dashboard commands (fpv/<id>/rxcmd). Wire BEFORE connect so a retained command —
         # delivered when _on_connect subscribes — is dispatched, not dropped while on_command is unset.
         publisher.on_command = controller.set_command
+    threshold_ctl = None
+    if publisher is not None:
+        threshold_ctl = ThresholdController(cfg, publisher, cfg.scanner_id, cfg.thresholds_path)
+        publisher.on_thresholds_command = threshold_ctl.apply
+    # Overlay the operator's persisted thresholds onto cfg for the running scan. This runs AFTER
+    # ThresholdController construction on purpose: the controller snapshots the factory/env defaults
+    # (for "reset") BEFORE this overlay, so a dashboard Reset restores factory sensitivity, not the
+    # last-saved values.
+    load_thresholds(cfg.thresholds_path, cfg)
+    if threshold_ctl is not None:
+        # Compose with any existing on_connected (e.g. the view announce set above) — do not drop it.
+        prev = publisher.on_connected
+        def _on_connected():
+            if prev is not None:
+                prev()
+            threshold_ctl.announce()
+        publisher.on_connected = _on_connected
     if publisher is not None:
         try:
             publisher.connect(int(time.time()))
             LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
+            if threshold_ctl is not None:
+                threshold_ctl.announce()
         except Exception:
             LOG.exception("MQTT connect failed; continuing without publishing")
             publisher = None

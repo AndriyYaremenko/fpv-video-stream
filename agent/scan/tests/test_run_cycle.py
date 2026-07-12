@@ -685,6 +685,44 @@ def test_main_serves_pending_view_even_when_scan_disabled(monkeypatch):
     assert cycles[0] == 0                            # sweep never ran
 
 
+def test_main_wires_threshold_controller(monkeypatch):
+    cfg = Config(); cfg.source = "replay"; cfg.mqtt_enabled = True
+    cfg.local_http_port = 0; cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+
+    pubs = []
+    class _FakePublisher:
+        def __init__(self, *a, **k):
+            self.on_command = None; self.on_view_command = None
+            self.on_connected = None; self.on_thresholds_command = None
+            pubs.append(self)
+        def connect(self, ts): pass
+        def publish_view(self, *a, **k): pass
+        def publish_scancfg(self, *a, **k): pass
+    monkeypatch.setattr(main, "MqttPublisher", _FakePublisher)
+    monkeypatch.setenv("FPV_VIDEO_ENABLED", "0")
+
+    made = []
+    class _SpyTC:
+        def __init__(self, *a, **k):
+            made.append(self)
+            self.apply = lambda d: None
+        def announce(self): pass
+    monkeypatch.setattr(main, "ThresholdController", _SpyTC)
+    monkeypatch.setattr(main, "load_thresholds", lambda p, c: None)
+
+    def _cycle(*a, **k): raise KeyboardInterrupt()
+    monkeypatch.setattr(main, "run_cycle", _cycle)
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=lambda s: None))
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()
+    assert len(made) == 1                          # controller constructed
+    assert len(pubs) == 1
+    assert pubs[0].on_thresholds_command is not None
+    assert pubs[0].on_thresholds_command is made[0].apply   # wired to the controller's apply
+
+
 def test_view_lpf_clamp():
     from main import _view_lpf
     assert _view_lpf(3, 8e6) == 3e6           # in-range: bw MHz -> Hz

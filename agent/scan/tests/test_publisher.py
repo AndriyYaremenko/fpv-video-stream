@@ -347,3 +347,28 @@ def test_on_connected_hook_errors_are_swallowed():
         raise RuntimeError("boom")
     p.on_connected = boom
     p._on_connect(fake, None, None, 0)              # must not raise
+
+
+def test_on_message_routes_thresholds_command():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    seen = []
+    p.on_thresholds_command = lambda d: seen.append(d)
+    p.on_command = lambda m, c: seen.append(("rx", m, c))     # must NOT fire for thresholds
+    import types
+    msg = types.SimpleNamespace(payload=json.dumps({"thresholds": {"snr_threshold_db": 12}}).encode())
+    p._on_message(fake, None, msg)
+    assert seen == [{"thresholds": {"snr_threshold_db": 12}}]  # routed to thresholds, not rx
+
+
+def test_publish_scancfg_topic_retained_payload():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_scancfg(500, {"snr_threshold_db": 12.0, "min_bandwidth_mhz": 5.0,
+                            "occupancy_snr_db": 10.0, "carrier_snr_db": 15.0, "carrier_min_bw_mhz": 0.5})
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/scancfg"][-1]
+    topic, payload, qos, retain = msg
+    assert retain is True
+    body = json.loads(payload)
+    assert body["scanner_id"] == "hackrf" and body["ts"] == 500
+    assert body["snr_threshold_db"] == 12.0 and body["carrier_snr_db"] == 15.0
