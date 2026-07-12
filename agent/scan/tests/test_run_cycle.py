@@ -690,10 +690,12 @@ def test_main_wires_threshold_controller(monkeypatch):
     cfg.local_http_port = 0; cfg.rx5808_enabled = False
     monkeypatch.setattr(main, "load_config", lambda: cfg)
 
+    pubs = []
     class _FakePublisher:
         def __init__(self, *a, **k):
             self.on_command = None; self.on_view_command = None
             self.on_connected = None; self.on_thresholds_command = None
+            pubs.append(self)
         def connect(self, ts): pass
         def publish_view(self, *a, **k): pass
         def publish_scancfg(self, *a, **k): pass
@@ -702,7 +704,9 @@ def test_main_wires_threshold_controller(monkeypatch):
 
     made = []
     class _SpyTC:
-        def __init__(self, *a, **k): made.append((a, k)); self.apply = lambda d: None
+        def __init__(self, *a, **k):
+            made.append(self)
+            self.apply = lambda d: None
         def announce(self): pass
     monkeypatch.setattr(main, "ThresholdController", _SpyTC)
     monkeypatch.setattr(main, "load_thresholds", lambda p, c: None)
@@ -714,6 +718,9 @@ def test_main_wires_threshold_controller(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         main.main()
     assert len(made) == 1                          # controller constructed
+    assert len(pubs) == 1
+    assert pubs[0].on_thresholds_command is not None
+    assert pubs[0].on_thresholds_command is made[0].apply   # wired to the controller's apply
 
 
 def test_view_lpf_clamp():

@@ -223,7 +223,6 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
-    load_thresholds(cfg.thresholds_path, cfg)     # operator's saved sensitivity survives restart
     holder = Holder()
     if cfg.local_http_port:
         server = make_local_server(cfg.local_http_host, cfg.local_http_port, holder)
@@ -345,6 +344,11 @@ def main() -> None:
     if publisher is not None:
         threshold_ctl = ThresholdController(cfg, publisher, cfg.scanner_id, cfg.thresholds_path)
         publisher.on_thresholds_command = threshold_ctl.apply
+    # Overlay the operator's persisted thresholds onto cfg for the running scan. This runs AFTER
+    # ThresholdController construction on purpose: the controller snapshots the factory/env defaults
+    # (for "reset") BEFORE this overlay, so a dashboard Reset restores factory sensitivity, not the
+    # last-saved values.
+    load_thresholds(cfg.thresholds_path, cfg)
     if threshold_ctl is not None:
         # Compose with any existing on_connected (e.g. the view announce set above) — do not drop it.
         prev = publisher.on_connected

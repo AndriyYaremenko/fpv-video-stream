@@ -65,7 +65,8 @@ class ThresholdController:
         self._id = scanner_id
         self._path = persist_path
         self._clock = clock
-        self._defaults = active(cfg)          # snapshot for reset (post-env, pre-file overlay caller's choice)
+        self._defaults = active(cfg)          # reset baseline: main constructs the controller BEFORE the
+        # persisted-file overlay, so this is the factory/env config, not the last-saved values
 
     def apply(self, data):
         try:
