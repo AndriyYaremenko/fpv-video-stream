@@ -153,3 +153,88 @@ def test_bladerf_device_retunes_and_converts():
     dev.close()
     assert ("enable", False) in events
     assert ("close",) in events
+
+
+import collections
+import threading
+
+from bladerf_source import BladerfViewSource, iq_from_sc16q11
+import numpy as np
+
+
+class _FakeBladeRadio:
+    """Streaming radio double: read() blocks briefly for fed data, else raises (timeout)."""
+    def __init__(self):
+        self.freqs = []
+        self.closed = False
+        self._q = collections.deque()
+        self._cv = threading.Condition()
+
+    def set_frequency(self, hz):
+        self.freqs.append(hz)
+
+    def feed(self, data):
+        with self._cv:
+            self._q.append(data)
+            self._cv.notify()
+
+    def read(self, num_samples):
+        with self._cv:
+            if not self._q:
+                self._cv.wait(0.05)
+            if not self._q:
+                raise TimeoutError("no samples")
+            return self._q.popleft()
+
+    def close(self):
+        self.closed = True
+
+
+def _view_source(radios, read_samples=2):
+    def factory():
+        r = _FakeBladeRadio()
+        radios.append(r)
+        return r
+    return BladerfViewSource(factory, sample_rate_hz=4e6, read_samples=read_samples)
+
+
+def test_view_source_wire_format_fields():
+    s = BladerfViewSource(lambda: None, 4e6)
+    assert s.bytes_per_sample == 4
+    raw = np.array([2048, 0, 0, 2048], dtype=np.int16).tobytes()
+    iq = s.to_iq(raw)
+    assert iq.dtype == np.complex64
+    assert np.allclose(iq, np.array([1 + 0j, 0 + 1j], dtype=np.complex64))
+
+
+def test_tune_opens_lazily_sets_freq_and_delivers():
+    radios = []
+    s = _view_source(radios)
+    s.tune(947e6)
+    assert len(radios) == 1 and radios[0].freqs == [947000000]
+    radios[0].feed(b"01234567")                         # 8 raw bytes = 2 SC16 samples
+    assert s.read_chunk(8, timeout_s=1.0) == b"01234567"
+    s.close()
+    assert radios[0].closed
+
+
+def test_recover_reopens_and_retunes():
+    radios = []
+    s = _view_source(radios)
+    s.tune(947e6)
+    s.recover()
+    assert radios[0].closed
+    assert len(radios) == 2 and radios[1].freqs == [947000000]
+    s.close()
+
+
+def test_close_stops_reader_and_reopens_on_next_tune():
+    radios = []
+    s = _view_source(radios)
+    s.tune(947e6)
+    s.close()
+    s.close()                                            # idempotent
+    assert radios[0].closed
+    s.tune(905e6)
+    assert len(radios) == 2 and radios[1].freqs == [905000000]
+    s.close()
