@@ -75,3 +75,29 @@ under load means power, not code.
 Optional: flash the FPGA to the bladeRF's SPI flash so it autoloads at boot without a
 per-open USB bitstream transfer (faster, more robust) — but flashing still needs stable
 power to complete.
+
+## bladeRF як вьювер + ролі SDR (2026-07-12)
+
+Будь-який SDR може свіпити та/або стрімити. Роль юніта = два прапорці:
+
+| env | дія | default |
+|-----|-----|---------|
+| `SCAN_ENABLED` | вмикає свіп-цикл | `1` |
+| `VIEW_ENABLED` | вмикає вью-стрім | `0` |
+
+- **Чистий свіпер:** `SCAN_ENABLED=1 VIEW_ENABLED=0` (напр. bladeRF на всі бенди).
+- **Чистий вьювер:** `SCAN_ENABLED=0 VIEW_ENABLED=1 VIEW_PUSH_URL=rtsp://<pubuser>:<pass>@10.8.0.1:8554/<stream>`.
+- **Обидва (один SDR):** `SCAN_ENABLED=1 VIEW_ENABLED=1` — свіпить, паузить на вью, повертається.
+
+**bladeRF-вьювер:** виставити `SCAN_SDR=bladerf`, `VIEW_ENABLED=1`,
+`VIEW_PUSH_URL=.../bladerf-view`. Підсилення береться з `BLADERF_GAIN`, sample_rate з
+`VIEW_SAMPLE_RATE_HZ` (default 8 MS/s).
+
+**Сервер (один раз):** зареєструвати publisher-девайс + MediaMTX-шлях `bladerf-view`
+(як існуючий `hackrf-view`) у `devices.yml`, `node bin/gen-mediamtx.js`, перезапустити MediaMTX.
+Дашборд підхопить новий стрім з ретейн-анонсу `fpv/<id>/view` — коду сервера/дашборда міняти НЕ треба.
+
+**Два SDR на вузлі:** два systemd-юніти, по одному на пристрій, ролі призначаються вільно
+(напр. bladeRF `SCAN_ENABLED=1 VIEW_ENABLED=0` + HackRF `SCAN_ENABLED=0 VIEW_ENABLED=1`, або навпаки).
+Різні процеси/пристрої → свіп і стрім ідуть паралельно, без взаємних пауз. НЕ перезаписувати
+hand-diverged unit-файли — редагувати їхні `Environment=`/`EnvironmentFile`.

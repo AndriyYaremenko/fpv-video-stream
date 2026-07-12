@@ -2,8 +2,8 @@
 
 libhackrf streams rx into a bounded ring; retune is hackrf_set_freq (ms) plus
 a ring flush — no subprocess restart. Mirrors bladerf_source.py: everything
-above the radio is injected/testable without hardware; LibHackrfRadio (added
-below IqRing) is the only cffi-touching code."""
+above the radio is injected/testable without hardware; LibHackrfRadio is the
+only cffi-touching code."""
 import logging
 
 from iqring import IqRing
