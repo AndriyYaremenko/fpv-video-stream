@@ -586,6 +586,7 @@ def test_run_stream_persistent_times_out():
 
 
 from stream_demod import run_stream_source
+from bladerf_source import iq_from_sc16q11
 
 
 class _FakeSource:
@@ -668,3 +669,59 @@ def test_run_stream_source_sets_osd_freq_then_full():
                       clock=lambda: 0.0, channel_of=None)
     assert fenc.osd_calls[0] == "947 MHz"                    # no channel_of -> freq only
     assert "947 MHz · PAL" in fenc.osd_calls                 # full after standard detect
+
+
+def _sc16_chunk_bytes(fs, seconds=CHUNK_S):
+    """PAL CVBS -> FM IQ quantized to SC16_Q11 (int16 interleaved), len = int(fs*4*seconds)."""
+    img = (np.indices((32, 32)).sum(axis=0) % 2).astype(float)
+    bb = make_cvbs("PAL", img, fs, frames=max(1, int(round(seconds * 25))))
+    iq = fm_modulate(bb, fs, 2e6)
+    n = int(fs * seconds)
+    iq = np.resize(iq, n)
+    i16 = np.empty(2 * n, dtype=np.int16)
+    i16[0::2] = np.clip(np.real(iq) * 2000, -2047, 2047).astype(np.int16)
+    i16[1::2] = np.clip(np.imag(iq) * 2000, -2047, 2047).astype(np.int16)
+    return i16.tobytes()
+
+
+class _Sc16Source:
+    """4-bytes/sample source: run_stream_source must size chunks x4 and use to_iq."""
+    bytes_per_sample = 4
+
+    def __init__(self, chunk, stop):
+        self._chunk = chunk
+        self._stop = stop
+        self.asked = []
+        self.to_iq_calls = 0
+        self.dropped_bytes = 0
+
+    def tune(self, hz):
+        pass
+
+    def read_chunk(self, n, timeout_s):
+        self.asked.append(n)
+        if self._chunk is None:
+            return None
+        c, self._chunk = self._chunk, None
+        self._stop.set()                # one chunk, then clean stop
+        return c
+
+    def to_iq(self, buf):
+        self.to_iq_calls += 1
+        return iq_from_sc16q11(buf)
+
+    def pending_bytes(self):
+        return 0
+
+
+def test_run_stream_source_uses_source_wire_format():
+    fs = 4e6
+    stop = threading.Event()
+    src = _Sc16Source(_sc16_chunk_bytes(fs), stop)
+    fenc = _FakeEncoder()
+    err = run_stream_source(_vcfg(), src, 947.0, stop, max_s=60.0, encoder=fenc,
+                            clock=lambda: 0.0)
+    assert err is None
+    assert src.asked[0] == int(fs * 4 * CHUNK_S)         # sized by bytes_per_sample=4
+    assert src.to_iq_calls >= 1                           # source decoder used, not int8
+    assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)

@@ -448,7 +448,9 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
     device."""
     clock = clock or time.monotonic
     fs = vcfg.view_sample_rate_hz
-    chunk_bytes = int(fs * 2 * CHUNK_S)
+    bytes_per_sample = getattr(source, "bytes_per_sample", 2)
+    to_iq = getattr(source, "to_iq", None) or iq_from_int8_fast
+    chunk_bytes = int(fs * bytes_per_sample * CHUNK_S)
     standard = None
     tracker = None
     error = None
@@ -481,7 +483,7 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
             silent_s = 0.0
             continue
         silent_s = 0.0
-        iq = iq_from_int8_fast(buf)
+        iq = to_iq(buf)
         if standard is None:
             bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
             standard = pick_standard(bb, fs, vcfg.view_standard,
