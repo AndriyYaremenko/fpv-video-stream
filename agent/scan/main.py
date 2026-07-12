@@ -305,7 +305,7 @@ def main() -> None:
                         run = _run_blade_view
                         reset = source.close     # on exit the next sweep cycle reopens the backend
                     else:
-                        run = lambda freq, stop, max_s: stream_demod.run_stream_persistent(
+                        run = lambda freq, bw, stop, max_s: stream_demod.run_stream_persistent(
                             viewcfg, freq, stop, max_s, encoder,
                             lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable,
                             channel_of=nearest_channel)
@@ -313,7 +313,7 @@ def main() -> None:
                     if viewcfg.view_engine != "legacy":
                         LOG.warning("view: unknown VIEW_ENGINE %r -> legacy pipeline",
                                     viewcfg.view_engine)
-                    run = lambda freq, stop, max_s: stream_demod.run_stream(
+                    run = lambda freq, bw, stop, max_s: stream_demod.run_stream(
                         viewcfg, freq, stop, max_s,
                         lna=cfg.lna_gain, vga=cfg.vga_gain, amp=cfg.amp_enable)
                 view = ViewController(
