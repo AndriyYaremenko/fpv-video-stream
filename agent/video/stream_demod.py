@@ -437,7 +437,7 @@ CAPTURE_STALL_LIMIT = 3       # reopen attempts before the session errors out
 
 
 def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=None,
-                      channel_of=None):
+                      channel_of=None, lpf_cutoff_hz=None):
     """Session demod loop over an in-process CaptureSource (PR-C engine).
 
     tune() is milliseconds, so a retune re-enters here with the SAME open
@@ -448,6 +448,7 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
     device."""
     clock = clock or time.monotonic
     fs = vcfg.view_sample_rate_hz
+    lpf = vcfg.lpf_cutoff_hz if lpf_cutoff_hz is None else lpf_cutoff_hz
     bytes_per_sample = getattr(source, "bytes_per_sample", 2)
     to_iq = getattr(source, "to_iq", None) or iq_from_int8_fast
     chunk_bytes = int(fs * bytes_per_sample * CHUNK_S)
@@ -485,7 +486,7 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
         silent_s = 0.0
         iq = to_iq(buf)
         if standard is None:
-            bb = lowpass(fm_demod(iq), fs, vcfg.lpf_cutoff_hz)
+            bb = lowpass(fm_demod(iq), fs, lpf)
             standard = pick_standard(bb, fs, vcfg.view_standard,
                                      vcfg.line_snr_db, vcfg.harm_snr_db)
             tracker = SyncTracker(standard)
@@ -500,7 +501,7 @@ def run_stream_source(vcfg, source, freq_mhz, stop_event, max_s, encoder, clock=
             encoder.set_osd(_osd_for(freq_mhz, standard, channel_of))
         for fr in select_frames(
                 chunk_to_frames(iq, fs, standard, vcfg.view_width, VIEW_CANVAS_HEIGHT,
-                                vcfg.lpf_cutoff_hz, vcfg.blank_frac,
+                                lpf, vcfg.blank_frac,
                                 budget=frame_budget, tracker=tracker),
                 CHUNK_S, vcfg.view_fps):
             encoder.submit(fr.tobytes())

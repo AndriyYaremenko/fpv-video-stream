@@ -725,3 +725,36 @@ def test_run_stream_source_uses_source_wire_format():
     assert src.asked[0] == int(fs * 4 * CHUNK_S)         # sized by bytes_per_sample=4
     assert src.to_iq_calls >= 1                           # source decoder used, not int8
     assert fenc.frames and all(len(f) == 320 * VIEW_CANVAS_HEIGHT for f in fenc.frames)
+
+
+def test_run_stream_source_uses_lpf_override_when_given(monkeypatch):
+    import stream_demod as sd
+    seen = []
+    real_ctf = sd.chunk_to_frames
+    def spy_ctf(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18, **kw):
+        seen.append(lpf_cutoff_hz)
+        return real_ctf(iq, fs, standard, width, height, lpf_cutoff_hz, blank_frac, **kw)
+    monkeypatch.setattr(sd, "chunk_to_frames", spy_ctf)
+    fs = 4e6
+    stop = threading.Event()
+    src = _FakeSource([bytes(_chunk_bytes(fs))], stop=stop, stop_after=1)
+    sd.run_stream_source(_vcfg(), src, 947.0, stop, max_s=60.0, encoder=_FakeEncoder(),
+                         clock=lambda: 0.0, lpf_cutoff_hz=1.5e6)
+    assert seen and all(c == 1.5e6 for c in seen)     # override reached the demod
+
+
+def test_run_stream_source_defaults_lpf_to_vcfg(monkeypatch):
+    import stream_demod as sd
+    seen = []
+    real_ctf = sd.chunk_to_frames
+    def spy_ctf(iq, fs, standard, width, height, lpf_cutoff_hz=5e6, blank_frac=0.18, **kw):
+        seen.append(lpf_cutoff_hz)
+        return real_ctf(iq, fs, standard, width, height, lpf_cutoff_hz, blank_frac, **kw)
+    monkeypatch.setattr(sd, "chunk_to_frames", spy_ctf)
+    fs = 4e6
+    stop = threading.Event()
+    src = _FakeSource([bytes(_chunk_bytes(fs))], stop=stop, stop_after=1)
+    cfg = _vcfg()                                       # _vcfg sets lpf_cutoff_hz = 2.5e6
+    sd.run_stream_source(cfg, src, 947.0, stop, max_s=60.0, encoder=_FakeEncoder(),
+                         clock=lambda: 0.0)             # no override
+    assert seen and all(c == cfg.lpf_cutoff_hz for c in seen)
