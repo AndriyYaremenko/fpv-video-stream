@@ -55,7 +55,7 @@ export function render(container, ctx){
 
   const head=el('div',null,'<span class="label-caps">ІСТОРІЯ ДЕТЕКЦІЙ</span> <button type="button" class="btn" id="detections-refresh" style="padding:3px 9px;font-size:11px;">оновити</button>');
   container.appendChild(head);
-  const tableSlot=el('div',null, historyCache ? '' : '<p class="muted">Завантаження…</p>');
+  const tableSlot=el('div','table-scroll', historyCache ? '' : '<p class="muted">Завантаження…</p>');
   if (historyCache) tableSlot.appendChild(historyTable(historyCache));
   container.appendChild(tableSlot);
   head.querySelector('#detections-refresh').addEventListener('click', () => {
