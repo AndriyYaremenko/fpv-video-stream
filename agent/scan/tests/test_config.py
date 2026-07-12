@@ -128,3 +128,10 @@ def test_sdr_backend_defaults_and_env():
     assert c2.bladerf_window_mhz == 15.0
     assert c2.bladerf_sweep_samples == 32768
     assert c2.bladerf_gain_db == 30
+
+
+def test_scan_enabled_default_and_env():
+    assert load_config({}).scan_enabled is True
+    assert load_config({"SCAN_ENABLED": "0"}).scan_enabled is False
+    assert load_config({"SCAN_ENABLED": "false"}).scan_enabled is False
+    assert load_config({"SCAN_ENABLED": "1"}).scan_enabled is True

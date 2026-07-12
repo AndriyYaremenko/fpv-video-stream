@@ -537,3 +537,149 @@ def test_main_enters_pending_view_without_the_idle_sleep(monkeypatch):
 
     assert fakes and fakes[0].entered == [5865.0]   # the pending view WAS entered
     assert sleeps == []                             # ...without the 1 s idle sleep first
+
+
+def test_main_viewer_only_skips_sweep(monkeypatch):
+    # SCAN_ENABLED off: run_cycle is never called; the loop idles awaiting view commands.
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "hackrf"
+    cfg.scan_enabled = False
+    cfg.mqtt_enabled = False
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+    monkeypatch.setenv("FPV_VIDEO_ENABLED", "0")     # deterministic: skip emitter init
+
+    cycles = [0]
+    def _cycle(*a, **k):
+        cycles[0] += 1
+        raise AssertionError("run_cycle must not run when scan_enabled is False")
+    monkeypatch.setattr(main, "run_cycle", _cycle)
+
+    sleeps = []
+    def _sleep(s):
+        sleeps.append(s)
+        raise KeyboardInterrupt()           # end the loop at the idle sleep
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=_sleep))
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()
+    assert cycles[0] == 0                    # sweep gated off
+    assert sleeps == [0.2]                   # hit the viewer-only idle sleep
+
+
+def test_main_wires_bladerf_view_source(monkeypatch):
+    # sdr=bladerf + view enabled must construct BladerfViewSource (not the hackrf_transfer path).
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "bladerf"
+    cfg.mqtt_enabled = True
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+
+    class _FakePublisher:
+        def __init__(self, *a, **k):
+            self.on_command = None
+            self.on_view_command = None
+            self.on_connected = None
+        def connect(self, ts): pass
+        def publish_view(self, *a, **k): pass
+    monkeypatch.setattr(main, "MqttPublisher", _FakePublisher)
+
+    monkeypatch.setenv("VIEW_ENABLED", "1")
+    monkeypatch.setenv("VIEW_PUSH_URL", "rtsp://u:p@h:8554/bladerf-view")
+    monkeypatch.setenv("FPV_VIDEO_ENABLED", "0")         # no emitter
+
+    import view_encoder
+    class _FakeEnc:
+        def __init__(self, *a, **k): pass
+        def start(self): pass
+        def idle(self): pass
+    monkeypatch.setattr(view_encoder, "ViewEncoder", _FakeEnc)
+
+    import bladerf_source
+    made = []
+    class _SpySource:
+        bytes_per_sample = 4
+        def __init__(self, *a, **k): made.append((a, k))
+        def close(self): pass
+    monkeypatch.setattr(bladerf_source, "BladerfViewSource", _SpySource)
+    monkeypatch.setattr(bladerf_source, "open_bladerf_view_radio", lambda *a, **k: None)
+
+    def _cycle(*a, **k):
+        raise KeyboardInterrupt()            # end the loop right after wiring/setup
+    monkeypatch.setattr(main, "run_cycle", _cycle)
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=lambda s: None))
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()
+    assert len(made) == 1                    # bladeRF view source WAS wired
+
+
+def test_main_serves_pending_view_even_when_scan_disabled(monkeypatch):
+    # The SCAN_ENABLED gate sits AFTER pending-view entry: a pure viewer
+    # (scan_enabled=False) must STILL enter a pending view, not idle past it.
+    cfg = Config()
+    cfg.source = "live"
+    cfg.sdr = "hackrf"
+    cfg.scan_enabled = False
+    cfg.mqtt_enabled = True
+    cfg.local_http_port = 0
+    cfg.rx5808_enabled = False
+    monkeypatch.setattr(main, "load_config", lambda: cfg)
+
+    class _FakePublisher:
+        def __init__(self, *a, **k):
+            self.on_command = None
+            self.on_view_command = None
+            self.on_connected = None
+        def connect(self, ts): pass
+        def publish_view(self, *a, **k): pass
+    monkeypatch.setattr(main, "MqttPublisher", _FakePublisher)
+
+    monkeypatch.setenv("VIEW_ENABLED", "1")
+    monkeypatch.setenv("VIEW_PUSH_URL", "rtsp://u:p@h:8554/hackrf-view")
+    monkeypatch.setenv("FPV_VIDEO_ENABLED", "0")
+
+    import view_encoder
+    class _FakeEnc:
+        def __init__(self, *a, **k): pass
+        def start(self): pass
+        def idle(self): pass
+    monkeypatch.setattr(view_encoder, "ViewEncoder", _FakeEnc)
+
+    cycles = [0]
+    def _cycle(*a, **k):
+        cycles[0] += 1
+        raise AssertionError("run_cycle must not run when scan_enabled is False")
+    monkeypatch.setattr(main, "run_cycle", _cycle)
+
+    import view_controller as vc_mod
+    fakes = []
+    class _FakeView:
+        def __init__(self, *a, **k):
+            self.entered = []
+            self._p = [5865.0]
+            fakes.append(self)
+        def set_command(self, d): pass
+        def announce(self): pass
+        def has_pending(self): return False
+        def pending(self):
+            return self._p.pop(0) if self._p else None
+        def run_view(self, freq):
+            self.entered.append(freq)
+            raise KeyboardInterrupt()          # end the loop once the view is entered
+    monkeypatch.setattr(vc_mod, "ViewController", _FakeView)
+
+    # If the gate were WRONGLY placed before the view check, the loop would hit this
+    # sleep first and raise here with entered == [] -> the asserts below fail (no hang).
+    def _sleep(s):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(main, "time", types.SimpleNamespace(time=main.time.time, sleep=_sleep))
+
+    with pytest.raises(KeyboardInterrupt):
+        main.main()
+    assert fakes and fakes[0].entered == [5865.0]   # pending view served despite scan off
+    assert cycles[0] == 0                            # sweep never ran

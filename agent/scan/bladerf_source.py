@@ -158,3 +158,153 @@ def open_bladerf_capture(gain_db, bandwidth_hz) -> BladerfDevice:
         layout=_bladerf.ChannelLayout.RX_X1,
         fmt=_bladerf.Format.SC16_Q11,
     )
+
+
+import threading
+import time
+
+from iqring import IqRing
+
+VIEW_RING_SECONDS = 2.0            # rx ring depth: absorbs demod hiccups, bounds memory
+VIEW_READ_SAMPLES = 65536         # samples per sync_rx pull (~8 ms at 8 MS/s): bounds stop latency
+
+VIEW_STREAM_TIMEOUT_MS = 3500     # bladeRF sync_rx per-call timeout: a silent device blocks read() up to this long
+VIEW_CLOSE_JOIN_S = VIEW_STREAM_TIMEOUT_MS / 1000.0 + 1.0   # close() join MUST outlast a maximal blocking read()
+                                                            # so the radio is never closed while the reader is inside sync_rx
+
+
+class BladerfViewSource:
+    """CaptureSource for the view stream over an injected streaming radio factory.
+
+    Mirrors HackrfSource, but bladeRF has no rx callback: a reader thread pulls
+    fixed sub-chunks via radio.read() (blocking sync_rx) and writes raw SC16_Q11
+    into the shared IqRing, so capture overlaps demod (the demod side drains the
+    ring). read_chunk returns RAW bytes; run_stream_source decodes via to_iq."""
+
+    bytes_per_sample = 4          # SC16_Q11: 2 x int16 per complex sample
+
+    def __init__(self, open_radio, sample_rate_hz, read_samples=VIEW_READ_SAMPLES,
+                 ring_s=VIEW_RING_SECONDS):
+        self._open_radio = open_radio
+        self._fs = float(sample_rate_hz)
+        self._read_samples = int(read_samples)
+        self._ring = IqRing(int(self._fs * self.bytes_per_sample * ring_s))
+        self._radio = None
+        self._freq_hz = None
+        self._reader = None
+        self._stop_reader = None
+
+    @staticmethod
+    def to_iq(raw):
+        return iq_from_sc16q11(raw)
+
+    @property
+    def dropped_bytes(self):
+        return self._ring.dropped_bytes
+
+    def pending_bytes(self):
+        return self._ring.pending()
+
+    def tune(self, freq_hz):
+        if self._radio is None:
+            self._radio = self._open_radio()
+            self._start_reader(self._radio)
+        self._radio.set_frequency(int(freq_hz))
+        self._freq_hz = int(freq_hz)
+        self._ring.clear()               # the tune transient must not reach the demod
+
+    def read_chunk(self, n_bytes, timeout_s):
+        return self._ring.read(n_bytes, timeout_s)
+
+    def recover(self):
+        """USB-wedge watchdog action: close + reopen + retune."""
+        freq = self._freq_hz
+        self.close()
+        if freq is not None:
+            self.tune(freq)
+
+    def close(self):
+        r, self._radio = self._radio, None
+        if r is None:
+            return
+        if self._stop_reader is not None:
+            self._stop_reader.set()
+        if self._reader is not None:
+            self._reader.join(timeout=VIEW_CLOSE_JOIN_S)
+        self._reader = None
+        self._stop_reader = None
+        try:
+            r.close()
+        except Exception:
+            LOG.exception("bladeRF view close failed")
+
+    def _start_reader(self, radio):
+        self._stop_reader = threading.Event()
+        self._reader = threading.Thread(target=self._read_loop, args=(radio, self._stop_reader),
+                                        daemon=True)
+        self._reader.start()
+
+    def _read_loop(self, radio, stop):
+        while not stop.is_set():
+            try:
+                buf = radio.read(self._read_samples)
+            except Exception:
+                if stop.is_set():
+                    return
+                time.sleep(0.01)         # rx timeout / transient: back off, re-check stop
+                continue
+            if buf:
+                self._ring.write(buf)
+
+
+class BladeRfViewRadio:
+    """Streaming RX handle for BladerfViewSource: continuous sync_rx, retune via
+    set_frequency. Enables the module on the first tune. The radio/channel/enums are
+    injected (see open_bladerf_view_radio) so this class imports nothing from `bladerf`."""
+
+    def __init__(self, radio, channel):
+        self._radio = radio
+        self._ch = channel
+        self._enabled = False
+
+    def set_frequency(self, hz):
+        self._radio.set_frequency(self._ch, int(hz))
+        if not self._enabled:
+            self._radio.enable_module(self._ch, True)
+            self._enabled = True
+
+    def read(self, num_samples):
+        buf = bytearray(int(num_samples) * 4)          # SC16_Q11 = 2 x int16 per sample
+        self._radio.sync_rx(buf, int(num_samples))
+        return bytes(buf)
+
+    def close(self):
+        try:
+            if self._enabled:
+                self._radio.enable_module(self._ch, False)
+                self._enabled = False
+        except Exception:
+            LOG.exception("bladeRF view disable failed")
+        finally:
+            try:
+                self._radio.close()
+            except Exception:
+                LOG.exception("bladeRF view radio close failed")
+
+
+def open_bladerf_view_radio(gain_db, sample_rate_hz, bandwidth_hz) -> BladeRfViewRadio:
+    """Open the first bladeRF configured for continuous view streaming.
+    The only function here that imports `bladerf`. Raises on no device."""
+    import bladerf
+    from bladerf import _bladerf
+    radio = bladerf.BladeRF()
+    ch = bladerf.CHANNEL_RX(0)
+    radio.set_gain_mode(ch, _bladerf.GainMode.Manual)
+    radio.set_gain(ch, int(gain_db))
+    radio.set_sample_rate(ch, int(sample_rate_hz))
+    radio.set_bandwidth(ch, int(bandwidth_hz))
+    radio.sync_config(
+        layout=_bladerf.ChannelLayout.RX_X1, fmt=_bladerf.Format.SC16_Q11,
+        num_buffers=16, buffer_size=8192, num_transfers=8, stream_timeout=VIEW_STREAM_TIMEOUT_MS,
+    )
+    return BladeRfViewRadio(radio, ch)

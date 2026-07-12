@@ -25,6 +25,7 @@ class Config:
     mqtt_pass: str = ""
     mqtt_keepalive: int = 60
     source: str = "live"                       # "live" | "replay"
+    scan_enabled: bool = True                  # gate the sweep loop; a pure viewer sets 0
     fixtures_dir: str = ""
     state_path: str = "/run/fpv-scan/scan.json"
     dwell_sample_rate_hz: float = 20_000_000.0
@@ -96,6 +97,8 @@ def load_config(env: Optional[dict] = None) -> Config:
         c.mqtt_keepalive = int(env["SCAN_MQTT_KEEPALIVE"])
     if "SCAN_MQTT_ENABLED" in env:
         c.mqtt_enabled = env["SCAN_MQTT_ENABLED"].strip().lower() not in ("0", "false", "no", "")
+    if "SCAN_ENABLED" in env:
+        c.scan_enabled = env["SCAN_ENABLED"].strip().lower() not in ("0", "false", "no", "")
     c.fixtures_dir = env.get("SCAN_FIXTURES_DIR", c.fixtures_dir)
     c.state_path = env.get("SCAN_STATE_PATH", c.state_path)
     c.local_http_host = env.get("SCAN_HTTP_HOST", c.local_http_host)
