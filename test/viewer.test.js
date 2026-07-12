@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   emptyViewer, applyDetections, seedFromJournal, viewerRows,
   pickViewer, pickRxScanner, viewStream, ageLabel, RECENT_TTL_S, LIVE_STALE_S,
-  viewerListHtml, activeViewer, playerKey, whepRetryDelay,
+  viewerListHtml, activeViewer, playerKey, whepRetryDelay, viewerCards, stepDetectionFreq, viewerLabel,
 } from '../dashboard/public/viewer.js';
 
 const det = (over = {}) => ({
@@ -184,4 +184,58 @@ test('whepRetryDelay backs off 300ms -> 1.5s cap', () => {
   assert.equal(whepRetryDelay(2), 1200);
   assert.equal(whepRetryDelay(3), 1500);
   assert.equal(whepRetryDelay(10), 1500);
+});
+
+test('viewerLabel maps known ids, passes through unknown', () => {
+  assert.equal(viewerLabel('bladerf'), 'bladeRF');
+  assert.equal(viewerLabel('hackrf'), 'HackRF');
+  assert.equal(viewerLabel('scan-07'), 'scan-07');
+});
+
+test('viewerCards lists online view-capable scanners, sorted by id, with stream', () => {
+  const store = {
+    hackrf: { online: true, view: { active: false, stream: 'hackrf-view' } },
+    bladerf: { online: true, view: { active: true, stream: 'bladerf-view' } },
+    offline: { online: false, view: { stream: 'x-view' } },
+    noview: { online: true },
+  };
+  const cards = viewerCards(store);
+  assert.deepEqual(cards.map((c) => c.id), ['bladerf', 'hackrf']);   // sorted; offline/noview excluded
+  assert.equal(cards[0].label, 'bladeRF');
+  assert.equal(cards[0].stream, 'bladerf-view');
+  assert.equal(cards[1].stream, 'hackrf-view');
+  assert.equal(cards[0].view.active, true);
+});
+
+test('viewerCards falls back to <id>-view when the announce omits stream', () => {
+  const cards = viewerCards({ bladerf: { online: true, view: {} } });
+  assert.equal(cards[0].stream, 'bladerf-view');
+});
+
+test('viewerCards handles empty/undefined store', () => {
+  assert.deepEqual(viewerCards({}), []);
+  assert.deepEqual(viewerCards(undefined), []);
+});
+
+test('stepDetectionFreq steps to the next/prev detection and wraps', () => {
+  const rows = [{ center_mhz: 5800 }, { center_mhz: 1200 }, { center_mhz: 5865 }]; // unsorted input
+  assert.equal(stepDetectionFreq(rows, 1200, 1), 5800);      // next up
+  assert.equal(stepDetectionFreq(rows, 5800, 1), 5865);
+  assert.equal(stepDetectionFreq(rows, 5865, 1), 1200);      // wrap to lowest
+  assert.equal(stepDetectionFreq(rows, 5865, -1), 5800);     // prev down
+  assert.equal(stepDetectionFreq(rows, 1200, -1), 5865);     // wrap to highest
+});
+
+test('stepDetectionFreq: null/невідома поточна частота -> перший (up) / останній (down)', () => {
+  const rows = [{ center_mhz: 1200 }, { center_mhz: 5865 }];
+  assert.equal(stepDetectionFreq(rows, null, 1), 1200);
+  assert.equal(stepDetectionFreq(rows, null, -1), 5865);
+  assert.equal(stepDetectionFreq(rows, 3000, 1), 5865);      // next above 3000
+  assert.equal(stepDetectionFreq(rows, 3000, -1), 1200);     // prev below 3000
+});
+
+test('stepDetectionFreq: empty rows -> null; single detection returns itself', () => {
+  assert.equal(stepDetectionFreq([], 5800, 1), null);
+  assert.equal(stepDetectionFreq([{ center_mhz: 5800 }], 5800, 1), 5800);
+  assert.equal(stepDetectionFreq([{ center_mhz: 5800 }], 5800, -1), 5800);
 });
