@@ -31,5 +31,15 @@ export const FIXTURES = {
     video:{ ts:NOW-5, center_mhz:5800, standard:'PAL', line_hz:15625, sync_snr_db:18.3, frame_png_b64:'' },
     rxtune:{ ts:NOW, freq_mhz:5865, channel:'A1', mode:'scan', targets:[] },
     view:{ ts:NOW, active:true, freq_mhz:5800, until_ts:NOW+600, error:null, stream:'bladerf-view' },
-  } },
+  }
+  , hackrf: {
+    online: true, status_ts: NOW,
+    bands: { '5.8G': { low_mhz: 5645, high_mhz: 5945 } },
+    latestPsd: { '5.8G': psd(64, -72) }, waterfalls: { '5.8G': [] },
+    detection: { ts: NOW, occupancy: { '5.8G': 0.2 }, detections: [
+      { band: '5.8G', center_mhz: 5865, class: 'analog', power_dbm: -48, bandwidth_mhz: 17, confidence: 0.9, channel: 'A1', snr_db: 16 } ] },
+    rxtune: { ts: NOW, freq_mhz: 5865, channel: 'A1', mode: 'manual', targets: [] },
+    view: { ts: NOW, active: false, freq_mhz: null, until_ts: null, error: null, stream: 'hackrf-view' },
+  }
+  },
 };

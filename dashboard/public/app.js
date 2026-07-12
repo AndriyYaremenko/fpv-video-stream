@@ -1,5 +1,5 @@
 // dashboard/public/app.js — shell bootstrap: builds ctx + data stores, wires router/modals/topbar,
-// owns the camera WHEP players and the FPV Viewer generation-token player.
+// owns the camera WHEP players and the FPV Viewer per-viewer WHEP players.
 import { startWhep } from '/whep.js';
 import { SoundAlerter, diffNewKeys } from '/alert.js';
 import { MqttScanClient } from '/mqtt-scan.js';
@@ -8,7 +8,7 @@ import { createRouter } from '/router.js';
 import { createModals } from '/modals.js';
 import {
   emptyViewer, applyDetections, seedFromJournal,
-  pickViewer, pickRxScanner, viewStream, activeViewer, playerKey, whepRetryDelay, viewerCards,
+  pickViewer, pickRxScanner, whepRetryDelay, viewerCards,
 } from '/viewer.js';
 import { render as renderDashboard } from '/views/dashboard.js';
 import { render as renderViewer } from '/views/viewer.js';
@@ -253,6 +253,7 @@ async function boot() {
     cfg = fx.config;
     devices = fx.devices;
     scanClient.store = structuredClone(fx.scanStore);
+    window.__store = scanClient.store;   // dev-only seam: visual gate mutates online/view then __rerender()
     document.getElementById('operator-name').textContent = fx.operator;
     seedFromJournal(viewerState, fx.detections, Math.floor(Date.now() / 1000));
     foldDetections();
