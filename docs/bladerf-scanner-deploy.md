@@ -101,3 +101,10 @@ power to complete.
 (напр. bladeRF `SCAN_ENABLED=1 VIEW_ENABLED=0` + HackRF `SCAN_ENABLED=0 VIEW_ENABLED=1`, або навпаки).
 Різні процеси/пристрої → свіп і стрім ідуть паралельно, без взаємних пауз. НЕ перезаписувати
 hand-diverged unit-файли — редагувати їхні `Environment=`/`EnvironmentFile`.
+
+**Відновлення чистого bladeRF-вьювера (`SCAN_ENABLED=0`):** транзієнтні стали лікує `recover()`
+(close+reopen+retune) всередині сесії. Але стійкий USB-wedge (undervoltage-class reset → NoDevError
+в тому ж процесі) чистий вьювер САМ не полікує: процес-екзит із рестартом спрацьовує лише на шляху
+свіпу (`run_cycle`), який при `SCAN_ENABLED=0` не викликається — тож кожен вью падатиме з помилкою,
+а процес ідлитиме. Рекомендація: тримати bladeRF свіпером + HackRF вьювером (основний профіль), або
+додати зовнішній вотчдог на юніт-вьювер.
