@@ -145,6 +145,9 @@ class TxController:
                     try: radio.set_gain(int(gain))
                     except Exception: LOG.exception("tx retune set_gain failed")
                 LOG.info("tx retune -> %.1f MHz gain=%s", freq, gain)
+        except Exception as e:
+            LOG.exception("tx run_tx failed")
+            error = str(e)
         finally:
             if radio is not None:
                 try: radio.close()

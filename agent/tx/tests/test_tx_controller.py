@@ -103,3 +103,55 @@ def test_missing_file_rejected(tmp_path):
     ctl._exists = lambda p: False                          # simulate file gone
     ctl.set_command({"tx": {"action": "start", "file": "nope.mp4", "freq_mhz": 5800}})
     assert ctl.pending() is None
+
+
+def test_transmit_stops_when_deadline_trips(tmp_path):
+    now = [1000]
+    def clk(): now[0] += 10; return now[0]        # advances so clock() eventually >= deadline
+    polled = {"n": 0}
+    class _R:
+        def __init__(self): self.closed = False
+        def set_frequency(self, hz): pass
+        def set_gain(self, db): pass
+        def close(self): self.closed = True
+    def transmit_fn(radio, path, block, stop_check):
+        while not stop_check():                    # real transmit_loop polls stop_check
+            polled["n"] += 1
+            if polled["n"] > 10000: raise AssertionError("deadline never tripped")
+    states = []
+    class _Pub:
+        def publish_txstate(self, ts, s): states.append(dict(s))
+    cfg = TxConfig(tx_enabled=True, tx_dir=str(tmp_path),
+                   tx_cache_bin=str(tmp_path / "b.bin"), tx_max_s=50.0)
+    ctl = TxController(cfg, _Pub(), render_fn=lambda *a, **k: None,
+                       open_tx_fn=lambda *a, **k: _R(), transmit_fn=transmit_fn,
+                       clock=clk, exists_fn=lambda p: True)
+    ctl.set_command({"tx": {"action": "start", "file": "c.mp4", "freq_mhz": 5800}})
+    ctl.run_tx(ctl.pending())
+    assert polled["n"] > 0                          # stop_check was actually polled
+    assert states[-1]["status"] == "idle" and states[-1]["active"] is False
+
+
+def test_setup_failure_is_captured_not_raised(tmp_path):
+    states = []
+    class _Pub:
+        def publish_txstate(self, ts, s): states.append(dict(s))
+    def boom(*a, **k): raise RuntimeError("bladeRF busy")
+    cfg = TxConfig(tx_enabled=True, tx_dir=str(tmp_path), tx_cache_bin=str(tmp_path / "b.bin"))
+    ctl = TxController(cfg, _Pub(), render_fn=lambda *a, **k: None,
+                       open_tx_fn=boom, transmit_fn=lambda *a, **k: None,
+                       clock=lambda: 1000, exists_fn=lambda p: True)
+    ctl.set_command({"tx": {"action": "start", "file": "c.mp4", "freq_mhz": 5800}})
+    ctl.run_tx(ctl.pending())                        # must NOT raise
+    assert states[-1]["status"] == "idle"
+    assert states[-1]["error"] and "bladeRF busy" in states[-1]["error"]
+
+
+def test_changed_param_triggers_rerender(tmp_path):
+    ctl, pub, renders, radios, tx = _mk(tmp_path)
+    ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 5800}})
+    ctl.run_tx(ctl.pending())
+    ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 5800,
+                             "deviation_mhz": 6}})
+    ctl.run_tx(ctl.pending())
+    assert len(renders) == 2                              # changed deviation -> re-rendered
