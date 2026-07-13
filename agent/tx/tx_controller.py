@@ -110,6 +110,7 @@ class TxController:
         error = None
         radio = None
         freq = req["freq_mhz"]; gain = req["gain_db"]
+        self._stop.clear()                    # drop the start-trigger stop before the (blocking) render
         try:
             self._reset()                     # free the sweep's bladeRF before opening TX
             key = self._render_key(req)
@@ -121,30 +122,31 @@ class TxController:
                                 height=req["height"], fps=req["fps"], max_secs=req["secs"],
                                 vbi_lines=req["vbi_lines"])
                 self._last_render_key = key
-            radio = self._open_tx_fn(int(freq * 1e6), int(req["fs_hz"]), int(gain), int(req["fs_hz"]))
-            while True:
-                self._stop.clear()
-                since = self._now()
-                until = since + int(self._cfg.tx_max_s)
-                self._pub(since, True, "transmitting", req, freq, gain, until_ts=until, since_ts=since)
-                deadline = float(until)
-                stop_check = lambda: self._stop.is_set() or self._clock() >= deadline
-                try:
-                    self._transmit_fn(radio, self._cfg.tx_cache_bin, 32768 * 4, stop_check)
-                except Exception as e:
-                    LOG.exception("tx transmit crashed"); error = str(e); break
-                r = self._consume_retune()
-                if r is None:
-                    break                     # stop / deadline -> back to sweep
-                if "freq_mhz" in r:
-                    freq = r["freq_mhz"]
-                    try: radio.set_frequency(int(freq * 1e6))
-                    except Exception: LOG.exception("tx retune set_frequency failed")
-                if "gain_db" in r:
-                    gain = r["gain_db"]
-                    try: radio.set_gain(int(gain))
-                    except Exception: LOG.exception("tx retune set_gain failed")
-                LOG.info("tx retune -> %.1f MHz gain=%s", freq, gain)
+            if not self._stop.is_set():       # a genuine Stop clicked during render -> skip TX entirely
+                radio = self._open_tx_fn(int(freq * 1e6), int(req["fs_hz"]), int(gain), int(req["fs_hz"]))
+                while True:
+                    since = self._now()
+                    until = since + int(self._cfg.tx_max_s)
+                    self._pub(since, True, "transmitting", req, freq, gain, until_ts=until, since_ts=since)
+                    deadline = float(until)
+                    stop_check = lambda: self._stop.is_set() or self._clock() >= deadline
+                    try:
+                        self._transmit_fn(radio, self._cfg.tx_cache_bin, 32768 * 4, stop_check)
+                    except Exception as e:
+                        LOG.exception("tx transmit crashed"); error = str(e); break
+                    r = self._consume_retune()
+                    if r is None:
+                        break                 # stop / deadline -> back to sweep
+                    self._stop.clear()        # drop the retune's own stop-trigger so re-entry transmits
+                    if "freq_mhz" in r:
+                        freq = r["freq_mhz"]
+                        try: radio.set_frequency(int(freq * 1e6))
+                        except Exception: LOG.exception("tx retune set_frequency failed")
+                    if "gain_db" in r:
+                        gain = r["gain_db"]
+                        try: radio.set_gain(int(gain))
+                        except Exception: LOG.exception("tx retune set_gain failed")
+                    LOG.info("tx retune -> %.1f MHz gain=%s", freq, gain)
         except Exception as e:
             LOG.exception("tx run_tx failed")
             error = str(e)

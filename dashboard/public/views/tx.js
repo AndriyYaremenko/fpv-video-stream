@@ -30,6 +30,7 @@ function buildCard(id, ctx) {
     <div class="tx-actions">
       <button type="button" class="btn tx-start">▶ Старт</button>
       <button type="button" class="btn tx-stop" data-role="stop">■ Стоп</button>
+      <button type="button" class="btn tx-retune" data-role="retune">↻ наживо</button>
       <span class="tx-err" data-role="err"></span>
     </div>`;
 
@@ -54,6 +55,13 @@ function buildCard(id, ctx) {
     }
   });
   card.querySelector('.tx-stop').addEventListener('click', () => ctx.onTxStop(id));
+  card.querySelector('.tx-retune').addEventListener('click', () => {
+    const f = Number(freq.value);
+    const params = {};
+    if (Number.isFinite(f) && f >= 100 && f <= 6000) params.freqMhz = f;
+    if (gain.value !== '') params.gainDb = Number(gain.value);
+    if (params.freqMhz != null || params.gainDb != null) ctx.onTxRetune(id, params);
+  });
   return card;
 }
 
@@ -86,6 +94,7 @@ function updateCard(card, id, store, nowS) {
     banner.textContent = 'очікування';
   }
   card.querySelector('[data-role=stop]').disabled = !(active || tx.status === 'rendering');
+  card.querySelector('[data-role=retune]').disabled = !(active && tx.status === 'transmitting');
   card.querySelector('[data-role=err]').textContent = tx.error || '';
 }
 

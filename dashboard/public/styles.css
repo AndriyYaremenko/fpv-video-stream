@@ -269,5 +269,5 @@ a{color:var(--aux);}
 .tx-form .tx-freq, .tx-form .tx-gain, .tx-form .tx-dev { width: 84px; }
 .tx-form .tx-file { min-width: 130px; }
 .tx-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.tx-actions .tx-stop[disabled] { opacity: .5; cursor: not-allowed; }
+.tx-actions .btn[disabled] { opacity: .5; cursor: not-allowed; }
 .tx-err { color: var(--threat); font-size: 11px; font-family: var(--mono); }

@@ -147,6 +147,30 @@ def test_setup_failure_is_captured_not_raised(tmp_path):
     assert states[-1]["error"] and "bladeRF busy" in states[-1]["error"]
 
 
+def test_stop_during_render_skips_transmit(tmp_path):
+    from txconfig import TxConfig
+    from tx_controller import TxController
+    states = []; tx_called = []
+    class _Pub:
+        def publish_txstate(self, ts, s): states.append(dict(s))
+    class _R:
+        def set_frequency(self, hz): pass
+        def set_gain(self, db): pass
+        def close(self): pass
+    ctl_ref = [None]
+    def render_fn(*a, **k):
+        ctl_ref[0].set_command({"tx": {"action": "stop"}})   # Stop arrives DURING the (blocking) render
+    def transmit_fn(radio, path, block, stop_check): tx_called.append(1)
+    cfg = TxConfig(tx_enabled=True, tx_dir=str(tmp_path), tx_cache_bin=str(tmp_path / "b.bin"))
+    ctl = TxController(cfg, _Pub(), render_fn=render_fn, open_tx_fn=lambda *a, **k: _R(),
+                       transmit_fn=transmit_fn, clock=lambda: 1000, exists_fn=lambda p: True)
+    ctl_ref[0] = ctl
+    ctl.set_command({"tx": {"action": "start", "file": "c.mp4", "freq_mhz": 5800}})
+    ctl.run_tx(ctl.pending())
+    assert tx_called == []                                    # Stop during render -> never transmitted
+    assert states[-1]["status"] == "idle" and states[-1]["active"] is False
+
+
 def test_changed_param_triggers_rerender(tmp_path):
     ctl, pub, renders, radios, tx = _mk(tmp_path)
     ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 5800}})
