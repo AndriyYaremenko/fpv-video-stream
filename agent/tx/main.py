@@ -11,9 +11,7 @@ import os
 import signal
 import sys
 
-# agent/video/render.py exists and shadows our agent/tx/render.py if agent/video is
-# earlier on sys.path. Put agent/tx FIRST (our render wins); agent/video LAST so `synth`
-# still resolves but its render.py does NOT shadow ours. (Collision confirmed in Task 1.)
+# tx_render needs ../video for `synth`; keep agent/tx importable for `tx_render`/`bladerf_tx`.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -21,7 +19,7 @@ _VIDEO = os.path.abspath(os.path.join(_HERE, "..", "video"))
 if _VIDEO not in sys.path:
     sys.path.append(_VIDEO)
 
-from render import render                       # noqa: E402
+from tx_render import render                     # noqa: E402
 from bladerf_tx import open_bladerf_tx_radio, transmit_loop   # noqa: E402
 
 

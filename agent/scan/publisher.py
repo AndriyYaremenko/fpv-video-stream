@@ -53,9 +53,12 @@ class MqttPublisher:
         self._t_rxcmd = f"fpv/{scanner_id}/rxcmd"
         self._t_view = f"fpv/{scanner_id}/view"
         self._t_scancfg = f"fpv/{scanner_id}/scancfg"
+        self._t_txstate = f"fpv/{scanner_id}/txstate"
+        self._t_txfiles = f"fpv/{scanner_id}/txfiles"
         self.on_command = None          # set by the caller: fn(mode, channel)
         self.on_view_command = None     # set by the caller: fn(dict) — SDR view start/stop
         self.on_thresholds_command = None   # set by the caller: fn(dict) — sensitivity thresholds
+        self.on_tx_command = None       # set by the caller: fn(dict) — TX generator start/stop/retune
         self.on_connected = None        # set by the caller: fn() — runs after each (re)connect
         self._client = None
 
@@ -114,6 +117,13 @@ class MqttPublisher:
                 except Exception:
                     LOG.exception("on_thresholds_command handler failed")
             return
+        if "tx" in data:                # TX generator command — not routed to the RX5808 handler
+            if self.on_tx_command is not None:
+                try:
+                    self.on_tx_command(data)
+                except Exception:
+                    LOG.exception("on_tx_command handler failed")
+            return
         if self.on_command is None:
             return
         try:
@@ -165,6 +175,20 @@ class MqttPublisher:
         self._publish(
             self._t_scancfg,
             {"scanner_id": self.scanner_id, "ts": ts, **thresholds},
+            self.QOS_DETECTION,
+        )
+
+    def publish_txstate(self, ts, state):
+        self._publish(
+            self._t_txstate,
+            {"scanner_id": self.scanner_id, "ts": ts, **state},
+            self.QOS_DETECTION,
+        )
+
+    def publish_txfiles(self, ts, files, dir):
+        self._publish(
+            self._t_txfiles,
+            {"scanner_id": self.scanner_id, "ts": ts, "files": files, "dir": dir},
             self.QOS_DETECTION,
         )
 

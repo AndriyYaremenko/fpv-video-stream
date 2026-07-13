@@ -22,6 +22,25 @@ export function buildViewCommand(action, freqMhz, bwMhz) {
   return cmd;
 }
 
+// Build a TX-generator command for fpv/<id>/rxcmd
+// ({tx:{action:'start',file,freq_mhz,gain_db?,deviation_mhz?,standard?,secs?}} | {tx:{action:'stop'}}
+//  | {tx:{action:'retune',freq_mhz?,gain_db?}}).
+export function buildTxCommand(action, params = {}) {
+  if (action === 'stop') return { tx: { action: 'stop' } };
+  if (action === 'retune') {
+    const tx = { action: 'retune' };
+    if (Number.isFinite(Number(params.freqMhz))) tx.freq_mhz = Number(params.freqMhz);
+    if (Number.isFinite(Number(params.gainDb))) tx.gain_db = Number(params.gainDb);
+    return { tx };
+  }
+  const tx = { action: 'start', file: params.file, freq_mhz: Number(params.freqMhz) };
+  if (Number.isFinite(Number(params.gainDb))) tx.gain_db = Number(params.gainDb);
+  if (Number.isFinite(Number(params.deviationMhz))) tx.deviation_mhz = Number(params.deviationMhz);
+  if (params.standard) tx.standard = params.standard;
+  if (Number.isFinite(Number(params.secs))) tx.secs = Number(params.secs);
+  return { tx };
+}
+
 export function buildThresholdCommand(obj) {
   if (obj === 'reset') return { thresholds: 'reset' };
   const th = {};
@@ -33,7 +52,7 @@ export function buildThresholdCommand(obj) {
 
 function ensure(store, id) {
   if (!store[id]) {
-    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, scancfg: null, bands: {}, latestPsd: {}, waterfalls: {} };
+    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, scancfg: null, txstate: null, txfiles: null, bands: {}, latestPsd: {}, waterfalls: {} };
   }
   return store[id];
 }
@@ -42,7 +61,7 @@ function ensure(store, id) {
 // payload may be a JSON string or an already-parsed object. Pure + safe on bad input.
 export function reduce(store, topic, payload, opts = {}) {
   const depth = opts.depth || DEFAULT_DEPTH;
-  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry|scancfg)$/.exec(topic || '');
+  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry|scancfg|txstate|txfiles)$/.exec(topic || '');
   if (!m) return store;
   const [, id, kind] = m;
   let data;
@@ -104,6 +123,26 @@ export function reduce(store, topic, payload, opts = {}) {
       carrier_snr_db: data.carrier_snr_db == null ? null : Number(data.carrier_snr_db),
       carrier_min_bw_mhz: data.carrier_min_bw_mhz == null ? null : Number(data.carrier_min_bw_mhz),
     };
+  } else if (kind === 'txstate') {
+    s.txstate = {
+      ts: data.ts || 0,
+      active: !!data.active,
+      status: data.status || 'idle',
+      file: data.file || null,
+      freq_mhz: data.freq_mhz == null ? null : Number(data.freq_mhz),
+      gain_db: data.gain_db == null ? null : Number(data.gain_db),
+      deviation_mhz: data.deviation_mhz == null ? null : Number(data.deviation_mhz),
+      standard: data.standard || null,
+      since_ts: data.since_ts == null ? null : Number(data.since_ts),
+      until_ts: data.until_ts == null ? null : Number(data.until_ts),
+      error: data.error || null,
+    };
+  } else if (kind === 'txfiles') {
+    s.txfiles = {
+      ts: data.ts || 0,
+      dir: data.dir || null,
+      files: Array.isArray(data.files) ? data.files : [],
+    };
   } else if (kind === 'spectrum') {
     for (const b of (data.bands || [])) {
       if (!b || b.id == null) continue;
@@ -132,7 +171,7 @@ export class MqttScanClient {
     const client = window.mqtt.connect(url, { username: user, password: pass, reconnectPeriod: 4000 });
     let raf = 0;
     const notify = () => { raf = 0; onChange(this.store); };
-    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry', 'fpv/+/scancfg']));
+    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry', 'fpv/+/scancfg', 'fpv/+/txstate', 'fpv/+/txfiles']));
     client.on('message', (topic, buf) => {
       try { reduce(this.store, topic, buf.toString(), { depth: this.depth }); } catch { return; }
       if (!raf) raf = requestAnimationFrame(notify);
@@ -164,6 +203,14 @@ export class MqttScanClient {
   publishThresholds(id, obj) {
     if (!this.client || !id) return;
     this.client.publish(`fpv/${id}/rxcmd`, JSON.stringify(buildThresholdCommand(obj)),
+      { qos: 1, retain: false });
+  }
+
+  // TX-generator command — same rxcmd topic, NOT retained (a retained start would re-enter TX on every Pi reconnect).
+  publishTx(id, action, params) {
+    if (!this.client || !id) return;
+    if (action === 'start' && !Number.isFinite(Number(params && params.freqMhz))) return;
+    this.client.publish(`fpv/${id}/rxcmd`, JSON.stringify(buildTxCommand(action, params)),
       { qos: 1, retain: false });
   }
 }

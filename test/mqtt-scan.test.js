@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyStore, reduce, buildCommand, buildViewCommand, buildThresholdCommand } from '../dashboard/public/mqtt-scan.js';
+import { emptyStore, reduce, buildCommand, buildViewCommand, buildThresholdCommand, buildTxCommand } from '../dashboard/public/mqtt-scan.js';
 
 test('reduce ignores unknown/malformed topics', () => {
   assert.deepEqual(reduce(emptyStore(), 'fpv/x/other', '{}'), {});
@@ -147,4 +147,25 @@ test('reduce scancfg populates store[id].scancfg', () => {
     occupancy_snr_db: 10, carrier_snr_db: 15, carrier_min_bw_mhz: 0.5 }));
   assert.equal(store.bladerf.scancfg.snr_threshold_db, 12);
   assert.equal(store.bladerf.scancfg.carrier_min_bw_mhz, 0.5);
+});
+
+test('buildTxCommand start/stop/retune', () => {
+  assert.deepEqual(buildTxCommand('stop'), { tx: { action: 'stop' } });
+  assert.deepEqual(buildTxCommand('retune', { freqMhz: 5760, gainDb: 20 }),
+    { tx: { action: 'retune', freq_mhz: 5760, gain_db: 20 } });
+  const s = buildTxCommand('start', { file: 'c.mp4', freqMhz: '5800', gainDb: 25, deviationMhz: 4, standard: 'PAL', secs: 2 });
+  assert.deepEqual(s, { tx: { action: 'start', file: 'c.mp4', freq_mhz: 5800, gain_db: 25, deviation_mhz: 4, standard: 'PAL', secs: 2 } });
+});
+
+test('reduce txstate + txfiles', () => {
+  let store = emptyStore();
+  store = reduce(store, 'fpv/bladerf/txstate', JSON.stringify({
+    ts: 5, active: true, status: 'transmitting', file: 'c.mp4', freq_mhz: 5800, gain_db: 25,
+    deviation_mhz: 4, standard: 'PAL', since_ts: 100, until_ts: 220, error: null }));
+  assert.equal(store.bladerf.txstate.active, true);
+  assert.equal(store.bladerf.txstate.status, 'transmitting');
+  assert.equal(store.bladerf.txstate.until_ts, 220);
+  store = reduce(store, 'fpv/bladerf/txfiles', JSON.stringify({ ts: 6, dir: '/var/lib/fpv/tx', files: [{ name: 'c.mp4', size: 9, mtime: 1 }] }));
+  assert.equal(store.bladerf.txfiles.files.length, 1);
+  assert.equal(store.bladerf.txfiles.files[0].name, 'c.mp4');
 });
