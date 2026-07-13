@@ -207,6 +207,7 @@ a{color:var(--aux);}
   .nav-item.active{border-left-color:transparent;border-bottom-color:var(--on);}
   .dash{grid-template-columns:1fr;}
   .thresholds-panel{max-width:100%;box-sizing:border-box;}
+  .tx-card{min-width:100%;}
 }
 
 /* ---- FPV Viewer screen ---- */
@@ -253,3 +254,20 @@ a{color:var(--aux);}
 .thresholds-panel .th-field { display: flex; flex-direction: column; font-size: 11px; }
 .thresholds-panel .th-in { width: 74px; }
 .thresholds-panel .th-actions { margin-top: 8px; display: flex; gap: 8px; }
+
+/* ---- «Передавач» screen — per-node TX control ---- */
+.tx-root { display: flex; flex-wrap: wrap; gap: 12px; }
+.tx-card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 340px; box-sizing: border-box; }
+.tx-card .tx-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tx-card .tx-title { font-size: 13px; }
+.tx-banner { font-family: var(--mono); font-size: 12px; padding: 6px 9px; border-radius: 4px; margin-bottom: 10px; border: 1px solid var(--line); color: var(--muted); background: var(--panel-2); }
+.tx-banner.on { color: #fff; background: rgba(255,49,49,.16); border-color: var(--threat); font-weight: 700; }
+.tx-banner.rendering { color: var(--warn); background: rgba(255,140,0,.12); border-color: var(--warn); }
+.tx-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.tx-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.tx-form input, .tx-form select { background: #0d0d0d; border: 1px solid var(--line); color: var(--text); font-family: var(--mono); padding: 5px 7px; }
+.tx-form .tx-freq, .tx-form .tx-gain, .tx-form .tx-dev { width: 84px; }
+.tx-form .tx-file { min-width: 130px; }
+.tx-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tx-actions .tx-stop[disabled] { opacity: .5; cursor: not-allowed; }
+.tx-err { color: var(--threat); font-size: 11px; font-family: var(--mono); }
