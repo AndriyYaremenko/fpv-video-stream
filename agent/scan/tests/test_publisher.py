@@ -361,6 +361,25 @@ def test_on_message_routes_thresholds_command():
     assert seen == [{"thresholds": {"snr_threshold_db": 12}}]  # routed to thresholds, not rx
 
 
+def test_on_message_routes_tx_and_not_rx():
+    p = _MP("h", 1883, "", "", "scan-01")
+    seen = {}
+    p.on_tx_command = lambda d: seen.setdefault("tx", d)
+    p.on_command = lambda *a: seen.setdefault("rx", a)     # must NOT fire
+    p._on_message(None, None, _Msg(
+        json.dumps({"tx": {"action": "start", "file": "c.mp4", "freq_mhz": 5800}}).encode()))
+    assert seen.get("tx") == {"tx": {"action": "start", "file": "c.mp4", "freq_mhz": 5800}}
+    assert "rx" not in seen
+
+
+def test_on_message_tx_none_handler_is_safe():
+    p = _MP("h", 1883, "", "", "scan-01")
+    p.on_tx_command = None
+    p.on_command = lambda *a: (_ for _ in ()).throw(AssertionError("rx must not fire"))
+    p._on_message(None, None, _Msg(json.dumps({"tx": {"action": "stop"}}).encode()))
+    # no throw, no rx dispatch
+
+
 def test_publish_scancfg_topic_retained_payload():
     fake = FakeClient()
     p = _pub(fake); p.connect(ts=1)
@@ -372,3 +391,27 @@ def test_publish_scancfg_topic_retained_payload():
     body = json.loads(payload)
     assert body["scanner_id"] == "hackrf" and body["ts"] == 500
     assert body["snr_threshold_db"] == 12.0 and body["carrier_snr_db"] == 15.0
+
+
+def test_publish_txstate_topic_retained_payload():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_txstate(600, {"active": True, "file": "c.mp4", "freq_mhz": 5800})
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/txstate"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    body = json.loads(payload)
+    assert body["scanner_id"] == "hackrf" and body["ts"] == 600
+    assert body["active"] is True and body["file"] == "c.mp4" and body["freq_mhz"] == 5800
+
+
+def test_publish_txfiles_topic_retained_payload():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_txfiles(700, ["a.mp4", "b.mp4"], "/opt/tx/files")
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/txfiles"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    body = json.loads(payload)
+    assert body["scanner_id"] == "hackrf" and body["ts"] == 700
+    assert body["files"] == ["a.mp4", "b.mp4"] and body["dir"] == "/opt/tx/files"
