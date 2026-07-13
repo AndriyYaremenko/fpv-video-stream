@@ -87,3 +87,28 @@ def test_render_respects_max_frames_cap(tmp_path):
                       "PAL", 4e6, 1e6, True, 2)
     assert frames == 2                       # int(round(0.08*25)) == 2, loop is cap-bounded
     assert written == 2 * len(one)
+
+
+def test_render_creates_missing_out_dir(tmp_path):
+    from tx_render import render
+    w, h = 16, 16
+    full = b"\x80" * (w * h)
+
+    class _FakeStdout:
+        def __init__(self, data): self._data = list(data); self._i = 0
+        def read(self, n):
+            if self._i >= len(self._data): return b""
+            c = self._data[self._i]; self._i += 1; return c
+
+    class _FakeProc:
+        def __init__(self): self.stdout = _FakeStdout([full, b""])   # one frame then EOF
+        def kill(self): pass
+        def wait(self, timeout=None): pass
+
+    out_bin = tmp_path / "tx" / ".cache" / "current.bin"    # parent dirs do NOT exist
+    assert not out_bin.parent.exists()
+    frames, written = render("x.mp4", str(out_bin), standard="PAL", fs=4e6,
+                             deviation_hz=1e6, width=w, height=h, fps=25, max_secs=1.0,
+                             vbi_lines=2, popen=lambda *a, **k: _FakeProc())
+    assert out_bin.parent.exists()                          # render() made the cache dir
+    assert frames == 1 and out_bin.stat().st_size == written

@@ -3,6 +3,7 @@
 Reuses agent/video/synth.py for the CVBS + FM-modulation DSP; the only new DSP here
 is the SC16_Q11 quantizer (bladeRF TX wire format)."""
 import logging
+import os
 import subprocess
 
 import numpy as np
@@ -44,6 +45,9 @@ def render(path, out_bin, standard="PAL", fs=20_000_000.0, deviation_hz=4_000_00
     """Decode `path` with ffmpeg and write frame-by-frame SC16_Q11 IQ into `out_bin`,
     up to max_secs of the clip. Returns (frames_written, bytes_written)."""
     popen = popen or subprocess.Popen
+    out_dir = os.path.dirname(out_bin)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)      # cache dir (e.g. /var/lib/fpv/tx/.cache) may not exist yet
     frame_bytes = width * height
     max_frames = int(round(max_secs * fps))
     cap = popen(build_ffmpeg_decode_cmd(path, fps, width, height),
