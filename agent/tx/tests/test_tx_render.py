@@ -1,5 +1,5 @@
 import numpy as np
-from render import to_sc16q11, frame_to_iq, build_ffmpeg_decode_cmd
+from tx_render import to_sc16q11, frame_to_iq, build_ffmpeg_decode_cmd
 from bladerf_source import iq_from_sc16q11
 
 
@@ -38,7 +38,7 @@ def test_build_ffmpeg_decode_cmd():
 
 def test_render_drops_partial_final_frame(tmp_path):
     import numpy as np
-    from render import render, frame_to_iq
+    from tx_render import render, frame_to_iq
     w, h = 16, 16
     full = b"\x80" * (w * h)
     chunks = [full, full, b"\x01\x02\x03"]  # 2 full frames + a short (partial) tail
@@ -66,7 +66,7 @@ def test_render_drops_partial_final_frame(tmp_path):
 
 
 def test_render_respects_max_frames_cap(tmp_path):
-    from render import render, frame_to_iq
+    from tx_render import render, frame_to_iq
     import numpy as np
     w, h = 16, 16
     full = b"\x80" * (w * h)
