@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import threading
 import time
 from typing import List
@@ -344,6 +345,29 @@ def main() -> None:
     if publisher is not None:
         threshold_ctl = ThresholdController(cfg, publisher, cfg.scanner_id, cfg.thresholds_path)
         publisher.on_thresholds_command = threshold_ctl.apply
+    tx_ctl = None
+    txcfg = None
+    try:
+        if publisher is not None:
+            _txdir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tx"))
+            if _txdir not in sys.path:
+                sys.path.append(_txdir)      # tx module names are unique; append so scan/video win any tie
+            from txconfig import load_tx_config
+            txcfg = load_tx_config()
+            if txcfg.tx_enabled:
+                from registry import scan_video_files          # noqa: F401 (used below + in loop)
+                from tx_render import render as tx_render_fn
+                from bladerf_tx import open_bladerf_tx_radio, transmit_loop
+                from tx_controller import TxController
+                tx_ctl = TxController(
+                    txcfg, publisher, render_fn=tx_render_fn,
+                    open_tx_fn=open_bladerf_tx_radio, transmit_fn=transmit_loop,
+                    reset=_reset_bladerf_backend,               # free the sweep's bladeRF before/after TX
+                )
+                publisher.on_tx_command = tx_ctl.set_command
+                LOG.info("TX generator enabled (dir=%s max=%.0fs)", txcfg.tx_dir, txcfg.tx_max_s)
+    except Exception:
+        LOG.exception("TX generator init failed; continuing without it")
     # Overlay the operator's persisted thresholds onto cfg for the running scan. This runs AFTER
     # ThresholdController construction on purpose: the controller snapshots the factory/env defaults
     # (for "reset") BEFORE this overlay, so a dashboard Reset restores factory sensitivity, not the
@@ -357,19 +381,51 @@ def main() -> None:
                 prev()
             threshold_ctl.announce()
         publisher.on_connected = _on_connected
+    if tx_ctl is not None:
+        prev_tx = publisher.on_connected
+        def _on_connected_tx():
+            if prev_tx is not None:
+                prev_tx()
+            tx_ctl.announce()                                  # retained capability announce
+            try:
+                publisher.publish_txfiles(int(time.time()), scan_video_files(txcfg.tx_dir), txcfg.tx_dir)
+            except Exception:
+                LOG.exception("txfiles announce failed")
+        publisher.on_connected = _on_connected_tx
     if publisher is not None:
         try:
             publisher.connect(int(time.time()))
             LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
             if threshold_ctl is not None:
                 threshold_ctl.announce()
+            if tx_ctl is not None:
+                tx_ctl.announce()
+                try:
+                    publisher.publish_txfiles(int(time.time()), scan_video_files(txcfg.tx_dir), txcfg.tx_dir)
+                except Exception:
+                    LOG.exception("txfiles initial publish failed")
         except Exception:
             LOG.exception("MQTT connect failed; continuing without publishing")
             publisher = None
     backoff = 1.0
     blade_fails = 0
+    last_txfiles = 0.0
     while True:
         try:
+            if tx_ctl is not None:
+                now = time.time()
+                if now - last_txfiles > 60.0:               # cheap dir re-scan so new files appear
+                    try:
+                        publisher.publish_txfiles(int(now), scan_video_files(txcfg.tx_dir), txcfg.tx_dir)
+                    except Exception:
+                        LOG.exception("txfiles periodic publish failed")
+                    last_txfiles = now
+                treq = tx_ctl.pending()
+                if treq is not None:
+                    LOG.info("entering TX @ %.1f MHz (sweep paused)", treq["freq_mhz"])
+                    tx_ctl.run_tx(treq)                     # frees/reopens the bladeRF via reset internally
+                    LOG.info("TX ended; sweep resumes")
+                    continue
             req = view.pending() if view is not None else None
             if req is not None:
                 LOG.info("entering SDR view @ %.1f MHz (sweep paused)", req[0])
@@ -381,7 +437,8 @@ def main() -> None:
                 continue
             payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher,
                                 emitter=emitter, controller=controller,
-                                abort=view.has_pending if view is not None else None)
+                                abort=(lambda: (view is not None and view.has_pending())
+                                       or (tx_ctl is not None and tx_ctl.has_pending())))
             if payload is None:
                 continue                 # aborted for a pending view -> enter it immediately
             holder.payload = payload
@@ -389,6 +446,8 @@ def main() -> None:
             blade_fails = 0
             if view is not None and view.has_pending():
                 continue    # completed cycle already published; enter the pending view now
+            if tx_ctl is not None and tx_ctl.has_pending():
+                continue    # completed cycle already published; enter the pending TX now
         except Exception:
             LOG.exception("scan cycle failed; backing off %.0fs", backoff)
             # A killed sweep/dwell (e.g. subprocess timeout) can leave the HackRF
