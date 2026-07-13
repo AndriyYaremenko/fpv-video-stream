@@ -32,6 +32,8 @@ export const FIXTURES = {
     rxtune:{ ts:NOW, freq_mhz:5865, channel:'A1', mode:'scan', targets:[] },
     view:{ ts:NOW, active:true, freq_mhz:5800, until_ts:NOW+600, error:null, stream:'bladerf-view', bandwidth_mhz:3 },
     scancfg: { ts: NOW, snr_threshold_db: 20, min_bandwidth_mhz: 5, occupancy_snr_db: 10, carrier_snr_db: 15, carrier_min_bw_mhz: 0.5 },
+    txstate: { ts:NOW, active:true, status:'transmitting', file:'demo.mp4', freq_mhz:5800, gain_db:30, deviation_mhz:4, standard:'PAL', since_ts:NOW-30, until_ts:NOW+90, error:null },
+    txfiles: { ts:NOW, dir:'/var/lib/fpv/tx', files:[{ name:'demo.mp4', size:180000000, mtime:NOW-3600 }, { name:'test-bars.mp4', size:90000000, mtime:NOW-7200 }] },
   }
   , hackrf: {
     online: true, status_ts: NOW,
@@ -41,6 +43,8 @@ export const FIXTURES = {
       { band: '5.8G', center_mhz: 5865, class: 'analog', power_dbm: -48, bandwidth_mhz: 17, confidence: 0.9, channel: 'A1', snr_db: 16 } ] },
     rxtune: { ts: NOW, freq_mhz: 5865, channel: 'A1', mode: 'manual', targets: [] },
     view: { ts: NOW, active: false, freq_mhz: null, until_ts: null, error: null, stream: 'hackrf-view' },
+    txstate: { ts:NOW, active:false, status:'idle', file:null, freq_mhz:null, gain_db:null, deviation_mhz:null, standard:null, since_ts:null, until_ts:null, error:null },
+    txfiles: { ts:NOW, dir:'/var/lib/fpv/tx', files:[{ name:'demo.mp4', size:180000000, mtime:NOW-3600 }] },
   }
   },
 };

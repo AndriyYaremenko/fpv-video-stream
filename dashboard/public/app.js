@@ -15,6 +15,7 @@ import { render as renderViewer } from '/views/viewer.js';
 import { render as renderNodes } from '/views/nodes.js';
 import { render as renderDetections } from '/views/detections.js';
 import { render as renderFrames } from '/views/frames.js';
+import { render as renderTx } from '/views/tx.js';
 
 const PREVIEW = new URLSearchParams(location.search).has('preview');
 
@@ -122,6 +123,9 @@ const ctx = {
   onScanCmd: (id, cmd) => { if (!PREVIEW) scanClient.publishCommand(id, cmd); },
   onViewStart: (id, freq, bw) => { if (!PREVIEW) scanClient.publishView(id, 'start', freq, bw); },
   onViewStop: (id) => { if (!PREVIEW) scanClient.publishView(id, 'stop'); },
+  onTxStart: (id, params) => { if (!PREVIEW) scanClient.publishTx(id, 'start', params); },
+  onTxStop: (id) => { if (!PREVIEW) scanClient.publishTx(id, 'stop'); },
+  onTxRetune: (id, params) => { if (!PREVIEW) scanClient.publishTx(id, 'retune', params); },
   requestRender: () => router.renderActive(),
   handlers: {},
 };
@@ -134,6 +138,7 @@ const routes = [
   { hash: '#/dashboard', label: 'Панель', icon: '▤', section: 'screen-dashboard', mount: renderDashboard, live: true },
   { hash: '#/viewer', label: 'FPV Viewer', icon: '🎯', section: 'screen-viewer', mount: renderViewer, live: true },
   { hash: '#/nodes', label: 'Вузли', icon: '▦', section: 'screen-nodes', mount: renderNodes, live: true },
+  { hash: '#/tx', label: 'Передавач', icon: '📡', section: 'screen-tx', mount: renderTx, live: true },
   { hash: '#/detections', label: 'Детекції', icon: '≣', section: 'screen-detections', mount: renderDetections },
   { hash: '#/frames', label: 'Кадри', icon: '🖼️', section: 'screen-frames', mount: renderFrames },
 ];
