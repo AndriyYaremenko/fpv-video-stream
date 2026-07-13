@@ -393,8 +393,21 @@ def main() -> None:
                 LOG.exception("txfiles announce failed")
         publisher.on_connected = _on_connected_tx
     if publisher is not None:
-        try:
-            publisher.connect(int(time.time()))
+        # Retry the initial connect: over WireGuard the broker may not be reachable the instant the unit
+        # (re)starts (a transient timeout here would otherwise blind the agent — no rxcmd subscription,
+        # no publishing — for the whole process lifetime). paho auto-reconnects once the first connect
+        # succeeds, so we only need to guard the initial connect().
+        connected = False
+        for attempt in range(1, 11):
+            try:
+                publisher.connect(int(time.time()))
+                connected = True
+                break
+            except Exception:
+                LOG.warning("MQTT connect to %s:%d failed (attempt %d/10); retry in 3s",
+                            cfg.mqtt_host, cfg.mqtt_port, attempt)
+                time.sleep(3.0)
+        if connected:
             LOG.info("MQTT publisher connected to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
             if threshold_ctl is not None:
                 threshold_ctl.announce()
@@ -404,8 +417,8 @@ def main() -> None:
                     publisher.publish_txfiles(int(time.time()), scan_video_files(txcfg.tx_dir), txcfg.tx_dir)
                 except Exception:
                     LOG.exception("txfiles initial publish failed")
-        except Exception:
-            LOG.exception("MQTT connect failed; continuing without publishing")
+        else:
+            LOG.error("MQTT connect failed after 10 attempts; continuing without publishing")
             publisher = None
     backoff = 1.0
     blade_fails = 0
@@ -414,7 +427,7 @@ def main() -> None:
         try:
             if tx_ctl is not None:
                 now = time.time()
-                if now - last_txfiles > 60.0:               # cheap dir re-scan so new files appear
+                if publisher is not None and now - last_txfiles > 60.0:   # cheap dir re-scan so new files appear
                     try:
                         publisher.publish_txfiles(int(now), scan_video_files(txcfg.tx_dir), txcfg.tx_dir)
                     except Exception:
