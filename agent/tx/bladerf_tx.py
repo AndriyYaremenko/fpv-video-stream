@@ -42,6 +42,9 @@ class BladeRfTxRadio:
     def set_frequency(self, hz):
         self._radio.set_frequency(self._ch, int(hz))
 
+    def set_gain(self, db):
+        self._radio.set_gain(self._ch, int(db))
+
     def close(self):
         try:
             self._radio.enable_module(self._ch, False)
