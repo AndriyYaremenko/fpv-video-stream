@@ -86,6 +86,18 @@ def test_deadline_auto_stops(tmp_path):
     assert pub.states[-1]["status"] == "idle"
 
 
+def test_max_s_overrides_deadline_and_is_capped(tmp_path):
+    ctl, pub, renders, radios, tx = _mk(tmp_path)
+    ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 5800, "max_s": 30}})
+    ctl.run_tx(ctl.pending())
+    tstate = next(s for s in pub.states if s["status"] == "transmitting")
+    assert tstate["until_ts"] == tstate["since_ts"] + 30      # dashboard limit wins over tx_max_s(100)
+    ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 5800, "max_s": 999999}})
+    assert ctl.pending()["max_s"] == 3600                     # capped (RF safety)
+    ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 5800, "max_s": -5}})
+    assert ctl.pending()["max_s"] == 100                      # bad value -> env default
+
+
 def test_bad_commands_never_throw_and_set_nothing(tmp_path):
     ctl, pub, renders, radios, tx = _mk(tmp_path)
     ctl.set_command({"tx": {"action": "start", "file": "clip.mp4", "freq_mhz": 99999}})  # bad freq

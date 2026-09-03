@@ -2,7 +2,8 @@
 
 The MQTT thread calls set_command(); the scan loop polls pending() between cycles and calls
 run_tx(), which frees the sweep's bladeRF (reset), renders the clip once (cached by baked-param
-key), opens the TX radio, and loop-transmits until stop / the tx_max_s deadline — then the sweep
+key), opens the TX radio, and loop-transmits until stop / the max_s deadline (per-start, default
+tx_max_s, capped at MAX_S_CAP) — then the sweep
 resumes. Frequency/gain retune live without re-render. Never raises into callers."""
 import logging
 import os
@@ -13,6 +14,7 @@ LOG = logging.getLogger("tx.controller")
 
 FREQ_MIN_MHZ = 100.0
 FREQ_MAX_MHZ = 6000.0            # bladeRF tuning range
+MAX_S_CAP = 3600.0               # hard ceiling on an operator-chosen TX duration (RF safety)
 
 
 class TxController:
@@ -85,8 +87,10 @@ class TxController:
         dev_hz = float(dv) * 1e6 if isinstance(dv, (int, float)) and dv > 0 else c.deviation_hz
         std = tx.get("standard"); standard = std.strip().upper() if isinstance(std, str) and std else c.standard
         sc = tx.get("secs"); secs = float(sc) if isinstance(sc, (int, float)) and sc > 0 else c.secs
+        ms = tx.get("max_s")   # TX duration (auto-stop); dashboard field, else env default
+        max_s = min(float(ms), MAX_S_CAP) if isinstance(ms, (int, float)) and ms > 0 else c.tx_max_s
         return {"file": file, "file_path": path, "freq_mhz": float(f), "gain_db": gain,
-                "deviation_hz": dev_hz, "standard": standard, "secs": secs,
+                "deviation_hz": dev_hz, "standard": standard, "secs": secs, "max_s": max_s,
                 "fs_hz": c.fs_hz, "width": c.width, "height": c.height, "fps": c.fps,
                 "vbi_lines": c.vbi_lines}
 
@@ -126,7 +130,7 @@ class TxController:
                 radio = self._open_tx_fn(int(freq * 1e6), int(req["fs_hz"]), int(gain), int(req["fs_hz"]))
                 while True:
                     since = self._now()
-                    until = since + int(self._cfg.tx_max_s)
+                    until = since + int(req.get("max_s") or self._cfg.tx_max_s)
                     self._pub(since, True, "transmitting", req, freq, gain, until_ts=until, since_ts=since)
                     deadline = float(until)
                     stop_check = lambda: self._stop.is_set() or self._clock() >= deadline

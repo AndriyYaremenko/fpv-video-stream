@@ -23,7 +23,7 @@ export function buildViewCommand(action, freqMhz, bwMhz) {
 }
 
 // Build a TX-generator command for fpv/<id>/rxcmd
-// ({tx:{action:'start',file,freq_mhz,gain_db?,deviation_mhz?,standard?,secs?}} | {tx:{action:'stop'}}
+// ({tx:{action:'start',file,freq_mhz,gain_db?,deviation_mhz?,standard?,secs?,max_s?}} | {tx:{action:'stop'}}
 //  | {tx:{action:'retune',freq_mhz?,gain_db?}}).
 export function buildTxCommand(action, params = {}) {
   if (action === 'stop') return { tx: { action: 'stop' } };
@@ -38,6 +38,7 @@ export function buildTxCommand(action, params = {}) {
   if (Number.isFinite(Number(params.deviationMhz))) tx.deviation_mhz = Number(params.deviationMhz);
   if (params.standard) tx.standard = params.standard;
   if (Number.isFinite(Number(params.secs))) tx.secs = Number(params.secs);
+  if (Number.isFinite(Number(params.maxS))) tx.max_s = Number(params.maxS);   // TX auto-stop limit
   return { tx };
 }
 

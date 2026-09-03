@@ -24,8 +24,9 @@ function buildCard(id, ctx) {
       <label>Файл<select class="tx-file" data-role="file"></select></label>
       <label>Частота, МГц<input class="tx-freq" type="number" min="100" max="6000" step="1" placeholder="МГц"></label>
       <label>Gain<input class="tx-gain" type="number" min="0" max="60" step="1"></label>
-      <label>Девіація, МГц<input class="tx-dev" type="number" min="0.5" max="10" step="0.5"></label>
+      <label>Девіація, МГц<input class="tx-dev" type="number" min="0.5" max="20" step="0.5" placeholder="16"></label>
       <label>Стандарт<select class="tx-std">${STANDARDS.map((s) => `<option>${s}</option>`).join('')}</select></label>
+      <label>Ліміт, с<input class="tx-max" type="number" min="5" max="3600" step="5" placeholder="120"></label>
     </div>
     <div class="tx-actions">
       <button type="button" class="btn tx-start">▶ Старт</button>
@@ -39,6 +40,7 @@ function buildCard(id, ctx) {
   const gain = card.querySelector('.tx-gain');
   const dev = card.querySelector('.tx-dev');
   const std = card.querySelector('.tx-std');
+  const max = card.querySelector('.tx-max');
 
   card.querySelector('.tx-start').addEventListener('click', () => {
     const file = files.value;
@@ -51,6 +53,7 @@ function buildCard(id, ctx) {
         gainDb: gain.value === '' ? undefined : Number(gain.value),
         deviationMhz: dev.value === '' ? undefined : Number(dev.value),
         standard: std.value,
+        maxS: max.value === '' ? undefined : Number(max.value),
       });
     }
   });

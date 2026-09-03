@@ -153,8 +153,9 @@ test('buildTxCommand start/stop/retune', () => {
   assert.deepEqual(buildTxCommand('stop'), { tx: { action: 'stop' } });
   assert.deepEqual(buildTxCommand('retune', { freqMhz: 5760, gainDb: 20 }),
     { tx: { action: 'retune', freq_mhz: 5760, gain_db: 20 } });
-  const s = buildTxCommand('start', { file: 'c.mp4', freqMhz: '5800', gainDb: 25, deviationMhz: 4, standard: 'PAL', secs: 2 });
-  assert.deepEqual(s, { tx: { action: 'start', file: 'c.mp4', freq_mhz: 5800, gain_db: 25, deviation_mhz: 4, standard: 'PAL', secs: 2 } });
+  const s = buildTxCommand('start', { file: 'c.mp4', freqMhz: '5800', gainDb: 25, deviationMhz: 4, standard: 'PAL', secs: 2, maxS: 300 });
+  assert.deepEqual(s, { tx: { action: 'start', file: 'c.mp4', freq_mhz: 5800, gain_db: 25, deviation_mhz: 4, standard: 'PAL', secs: 2, max_s: 300 } });
+  assert.equal(buildTxCommand('start', { file: 'c.mp4', freqMhz: 5800 }).tx.max_s, undefined);   // empty field -> agent default
 });
 
 test('reduce txstate + txfiles', () => {
