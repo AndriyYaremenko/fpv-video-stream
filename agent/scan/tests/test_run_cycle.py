@@ -765,6 +765,21 @@ def test_run_cycle_relay_failure_does_not_break_cycle(tmp_path, monkeypatch):
     assert payload is not None and len(payload["detections"]) >= 1
 
 
+def test_run_cycle_feeds_relay_from_loose_carrier_path(tmp_path):
+    # Narrow carrier the strict detector misses -> demod-confirmed via the loose-carrier path;
+    # that "published" branch must feed the relay too (second video_hits.append site).
+    _write_narrow_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()                            # always "published"
+    em.last_sync_snr_db = 21.5
+    relay = _FakeRelay()
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em, relay=relay)
+
+    assert any(band == "5.8G" and abs(center - 5865) <= 2 and snr == 21.5
+               for band, center, snr in relay.hits)
+
+
 def test_view_lpf_clamp():
     from main import _view_lpf
     assert _view_lpf(3, 8e6) == 3e6           # in-range: bw MHz -> Hz
