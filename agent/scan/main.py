@@ -102,11 +102,12 @@ def _downsample(spec: Spectrum, points: int = 64) -> list:
 
 
 def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller=None,
-              abort=None) -> dict | None:
+              abort=None, relay=None) -> dict | None:
     detections: List[Detection] = []
     occupancy = {}
     spectrum_summary = {}
     rx_carrier_centers = []
+    video_hits = []          # (band, center_mhz, sync_snr_db) per sync-locked frame this cycle -> auto-relay
 
     for band, brange in cfg.bands.items():
         if abort is not None and abort():
@@ -161,6 +162,7 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                 try:
                     if emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts) == "published":
                         frame = emitter.last_frame_path
+                        video_hits.append((band, c.center_mhz, getattr(emitter, "last_sync_snr_db", None)))
                 except Exception:
                     LOG.exception("video emit failed")
 
@@ -191,6 +193,7 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
                     if emitter.maybe_emit(iq, cfg.dwell_sample_rate_hz, c.center_mhz, now_ts) == "published":
                         LOG.info("carrier video band=%s center=%.1fMHz frame=%s",
                                  band, c.center_mhz, emitter.last_frame_path)
+                        video_hits.append((band, c.center_mhz, getattr(emitter, "last_sync_snr_db", None)))
                         # A line-sync-locked demod IS an analog-video detection: surface
                         # carriers the strict bandwidth gate missed so they reach the
                         # MQTT detection payload → journal/dashboard/alerts.
@@ -213,6 +216,12 @@ def run_cycle(cfg: Config, now_ts: int, publisher=None, emitter=None, controller
             controller.update_targets(rx_carrier_centers)
         except Exception:
             LOG.exception("rx5808 update_targets failed")
+
+    if relay is not None:
+        try:
+            relay.update_hits(video_hits)
+        except Exception:
+            LOG.exception("relay update_hits failed")
 
     payload = build_payload(cfg.scanner_id, now_ts, detections, occupancy, spectrum_summary)
     write_state(cfg.state_path, payload)
@@ -368,6 +377,28 @@ def main() -> None:
                 LOG.info("TX generator enabled (dir=%s max=%.0fs)", txcfg.tx_dir, txcfg.tx_max_s)
     except Exception:
         LOG.exception("TX generator init failed; continuing without it")
+    relay = None
+    try:
+        if publisher is not None:
+            _relaydir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "relay"))
+            if _relaydir not in sys.path:
+                sys.path.append(_relaydir)   # relay module names are unique; append so scan/video win any tie
+            from relayconfig import load_relay_config
+            relaycfg = load_relay_config()
+            if relaycfg.relay_enabled:
+                from bladerf_relay import open_bladerf_relay_radio, relay_loop
+                from relay_controller import RelayController
+                relay = RelayController(
+                    relaycfg, publisher, open_fn=open_bladerf_relay_radio, loop_fn=relay_loop,
+                    reset=_reset_bladerf_backend,               # free the sweep's bladeRF before/after relay
+                    manual_pending=lambda: ((view is not None and view.has_pending())
+                                            or (tx_ctl is not None and tx_ctl.has_pending())),
+                )
+                publisher.on_relay_command = relay.set_command
+                LOG.info("Auto-relay enabled (dst=%.0f MHz armed=%s max=%.0fs guard=%.0fMHz)",
+                         relaycfg.dst_mhz, relaycfg.armed, relaycfg.max_s, relaycfg.guard_mhz)
+    except Exception:
+        LOG.exception("Auto-relay init failed; continuing without it")
     # Overlay the operator's persisted thresholds onto cfg for the running scan. This runs AFTER
     # ThresholdController construction on purpose: the controller snapshots the factory/env defaults
     # (for "reset") BEFORE this overlay, so a dashboard Reset restores factory sensitivity, not the
@@ -392,6 +423,13 @@ def main() -> None:
             except Exception:
                 LOG.exception("txfiles announce failed")
         publisher.on_connected = _on_connected_tx
+    if relay is not None:
+        prev_relay = publisher.on_connected
+        def _on_connected_relay():
+            if prev_relay is not None:
+                prev_relay()
+            relay.announce()                                   # retained capability announce
+        publisher.on_connected = _on_connected_relay
     if publisher is not None:
         # Retry the initial connect: over WireGuard the broker may not be reachable the instant the unit
         # (re)starts (a transient timeout here would otherwise blind the agent — no rxcmd subscription,
@@ -417,6 +455,8 @@ def main() -> None:
                     publisher.publish_txfiles(int(time.time()), scan_video_files(txcfg.tx_dir), txcfg.tx_dir)
                 except Exception:
                     LOG.exception("txfiles initial publish failed")
+            if relay is not None:
+                relay.announce()
         else:
             LOG.error("MQTT connect failed after 10 attempts; continuing without publishing")
             publisher = None
@@ -445,11 +485,19 @@ def main() -> None:
                 view.run_view(req)
                 LOG.info("SDR view ended; sweep resumes")
                 continue
+            if relay is not None:
+                rreq = relay.pending()
+                if rreq is not None:
+                    LOG.info("entering RELAY %s %.1f -> %.1f MHz (sweep paused)",
+                             rreq.get("band"), rreq["src_mhz"], rreq["dst_mhz"])
+                    relay.run_relay(rreq)                   # frees/reopens the bladeRF via reset internally
+                    LOG.info("RELAY ended; sweep resumes")
+                    continue
             if not cfg.scan_enabled:
                 time.sleep(0.2)          # viewer-only: no sweep, just await view commands
                 continue
             payload = run_cycle(cfg, now_ts=int(time.time()), publisher=publisher,
-                                emitter=emitter, controller=controller,
+                                emitter=emitter, controller=controller, relay=relay,
                                 abort=(lambda: (view is not None and view.has_pending())
                                        or (tx_ctl is not None and tx_ctl.has_pending())))
             if payload is None:

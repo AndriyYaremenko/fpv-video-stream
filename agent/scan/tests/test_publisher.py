@@ -415,3 +415,33 @@ def test_publish_txfiles_topic_retained_payload():
     body = json.loads(payload)
     assert body["scanner_id"] == "hackrf" and body["ts"] == 700
     assert body["files"] == ["a.mp4", "b.mp4"] and body["dir"] == "/opt/tx/files"
+
+
+def test_on_message_routes_relay_and_not_rx():
+    fake = FakeClient()
+    p = _pub(fake)
+    seen = {}
+    p.on_relay_command = lambda d: seen.setdefault("relay", d)
+    p.on_command = lambda *a: seen.setdefault("rx", a)     # must NOT fire
+    p._on_message(None, None, _Msg(json.dumps({"relay": {"action": "arm", "dst_mhz": 5771}}).encode()))
+    assert seen.get("relay") == {"relay": {"action": "arm", "dst_mhz": 5771}}
+    assert "rx" not in seen
+
+
+def test_on_message_relay_none_handler_is_safe():
+    p = _pub(FakeClient())
+    p.on_relay_command = None
+    p.on_command = lambda *a: (_ for _ in ()).throw(AssertionError("rx must not fire"))
+    p._on_message(None, None, _Msg(json.dumps({"relay": {"action": "disarm"}}).encode()))
+
+
+def test_publish_relaystate_topic_retained_payload():
+    fake = FakeClient()
+    p = _pub(fake); p.connect(ts=1)
+    p.publish_relaystate(800, {"armed": True, "active": True, "status": "relaying", "src_mhz": 3470})
+    msg = [m for m in fake.published if m[0] == "fpv/hackrf/relaystate"][-1]
+    topic, payload, qos, retain = msg
+    assert qos == 1 and retain is True
+    body = json.loads(payload)
+    assert body["scanner_id"] == "hackrf" and body["ts"] == 800
+    assert body["armed"] is True and body["status"] == "relaying" and body["src_mhz"] == 3470
