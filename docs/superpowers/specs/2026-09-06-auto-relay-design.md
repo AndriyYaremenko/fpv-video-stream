@@ -46,6 +46,7 @@
 | `rx_gain_db` | `RELAY_RX_GAIN_DB` | `40` | manual RX gain |
 | `tx_gain_db` | `RELAY_TX_GAIN_DB` | `60` | TX gain |
 | `agc_target` | `RELAY_AGC_TARGET` | `1600.0` | пік після AGC (з 2047) |
+| `min_rms` | `RELAY_MIN_RMS` | `40.0` | опорний RMS входу нижче цього (≈ −34 дБFS; реальне джерело ≈460) = «джерело вже зникло» → стоп одразу після 1-с вікна |
 | `block_samples` | — | `32768` | розмір блоку |
 
 Bool-парсинг як у `txconfig` (`not in ("0","false","no","")`).

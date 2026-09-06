@@ -92,5 +92,8 @@ def open_bladerf_relay_radio(src_hz, dst_hz, fs_hz, rx_gain_db, tx_gain_db, bloc
         radio.enable_module(tx, True)
         return BladeRfRelayRadio(radio, rx, tx, block_samples)
     except Exception:
-        radio.close()
+        try:
+            radio.close()                            # don't let a close failure mask the root cause
+        except Exception:
+            LOG.exception("bladeRF relay close after failed open")
         raise
