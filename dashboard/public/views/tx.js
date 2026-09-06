@@ -2,6 +2,7 @@
 // TX-capable node (store[id].txstate != null). RECONCILE-BASED (build-once skeleton + in-place live
 // updates), like views/nodes.js — route is live:true so a full innerHTML rebuild each tick would wipe
 // the operator's typed freq/gain and close the file <select>. Start requires a confirm (RF safety).
+// + relay arm/disarm block (store[id].relaystate)
 import { el, pip, escapeHtml } from '/views/components.js';
 
 const STANDARDS = ['PAL', 'NTSC'];
@@ -33,6 +34,13 @@ function buildCard(id, ctx) {
       <button type="button" class="btn tx-stop" data-role="stop">■ Стоп</button>
       <button type="button" class="btn tx-retune" data-role="retune">↻ наживо</button>
       <span class="tx-err" data-role="err"></span>
+    </div>
+    <div class="tx-relay" data-role="relay" hidden>
+      <span class="tx-relay-title mono">⇄ Авто-ретрансляція</span>
+      <label>Ціль, МГц<input class="tx-relay-dst" type="number" min="100" max="6000" step="1" placeholder="5771"></label>
+      <button type="button" class="btn tx-relay-arm" data-role="relay-arm">⚡ Озброїти</button>
+      <button type="button" class="btn tx-relay-disarm" data-role="relay-disarm">■ Зняти</button>
+      <span class="tx-relay-status mono" data-role="relay-status"></span>
     </div>`;
 
   const files = card.querySelector('[data-role=file]');
@@ -65,6 +73,12 @@ function buildCard(id, ctx) {
     if (gain.value !== '') params.gainDb = Number(gain.value);
     if (params.freqMhz != null || params.gainDb != null) ctx.onTxRetune(id, params);
   });
+  const rdst = card.querySelector('.tx-relay-dst');
+  card.querySelector('.tx-relay-arm').addEventListener('click', () => {
+    const d = Number(rdst.value);
+    ctx.onRelayArm(id, { dstMhz: rdst.value === '' || !Number.isFinite(d) ? undefined : d });
+  });
+  card.querySelector('.tx-relay-disarm').addEventListener('click', () => ctx.onRelayDisarm(id));
   return card;
 }
 
@@ -99,6 +113,27 @@ function updateCard(card, id, store, nowS) {
   card.querySelector('[data-role=stop]').disabled = !(active || tx.status === 'rendering');
   card.querySelector('[data-role=retune]').disabled = !(active && tx.status === 'transmitting');
   card.querySelector('[data-role=err]').textContent = tx.error || '';
+
+  const rs = s.relaystate;
+  const relay = card.querySelector('[data-role=relay]');
+  relay.hidden = !rs;                                     // no relaystate -> node has no relay role
+  if (rs) {
+    card.querySelector('[data-role=relay-arm]').disabled = !!rs.armed;
+    card.querySelector('[data-role=relay-disarm]').disabled = !rs.armed;
+    const st = card.querySelector('[data-role=relay-status]');
+    if (rs.active && rs.status === 'relaying') {
+      st.className = 'tx-relay-status mono on';
+      st.textContent = `⇄ ${rs.src_mhz} → ${rs.dst_mhz} МГц · ${rs.band || ''} · ⏱ ${fmtCountdown(rs.until_ts, nowS)}`
+        + (rs.rx_level_db == null ? '' : ` · вхід ${rs.rx_level_db} дБ`);
+    } else if (rs.armed) {
+      st.className = 'tx-relay-status mono armed';
+      st.textContent = 'озброєно · чекаю синхро-лок';
+    } else {
+      st.className = 'tx-relay-status mono';
+      st.textContent = 'вимкнено';
+    }
+    if (rs.error && !tx.error) card.querySelector('[data-role=err]').textContent = rs.error;
+  }
 }
 
 export function render(container, ctx) {

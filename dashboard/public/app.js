@@ -126,6 +126,8 @@ const ctx = {
   onTxStart: (id, params) => { if (!PREVIEW) scanClient.publishTx(id, 'start', params); },
   onTxStop: (id) => { if (!PREVIEW) scanClient.publishTx(id, 'stop'); },
   onTxRetune: (id, params) => { if (!PREVIEW) scanClient.publishTx(id, 'retune', params); },
+  onRelayArm: (id, params) => { if (!PREVIEW) scanClient.publishRelay(id, 'arm', params); },
+  onRelayDisarm: (id) => { if (!PREVIEW) scanClient.publishRelay(id, 'disarm'); },
   requestRender: () => router.renderActive(),
   handlers: {},
 };

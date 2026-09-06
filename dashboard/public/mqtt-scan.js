@@ -42,6 +42,14 @@ export function buildTxCommand(action, params = {}) {
   return { tx };
 }
 
+// Build an auto-relay command for fpv/<id>/rxcmd ({relay:{action:'arm',dst_mhz?}} | {relay:{action:'disarm'}}).
+export function buildRelayCommand(action, params = {}) {
+  if (action === 'disarm') return { relay: { action: 'disarm' } };
+  const relay = { action: 'arm' };
+  if (Number.isFinite(Number(params.dstMhz))) relay.dst_mhz = Number(params.dstMhz);
+  return { relay };
+}
+
 export function buildThresholdCommand(obj) {
   if (obj === 'reset') return { thresholds: 'reset' };
   const th = {};
@@ -53,7 +61,7 @@ export function buildThresholdCommand(obj) {
 
 function ensure(store, id) {
   if (!store[id]) {
-    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, scancfg: null, txstate: null, txfiles: null, bands: {}, latestPsd: {}, waterfalls: {} };
+    store[id] = { online: false, status_ts: 0, detection: null, video: null, rxtune: null, view: null, telemetry: null, scancfg: null, txstate: null, txfiles: null, relaystate: null, bands: {}, latestPsd: {}, waterfalls: {} };
   }
   return store[id];
 }
@@ -62,7 +70,7 @@ function ensure(store, id) {
 // payload may be a JSON string or an already-parsed object. Pure + safe on bad input.
 export function reduce(store, topic, payload, opts = {}) {
   const depth = opts.depth || DEFAULT_DEPTH;
-  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry|scancfg|txstate|txfiles)$/.exec(topic || '');
+  const m = /^fpv\/([^/]+)\/(spectrum|detection|status|video|rxtune|view|telemetry|scancfg|txstate|txfiles|relaystate)$/.exec(topic || '');
   if (!m) return store;
   const [, id, kind] = m;
   let data;
@@ -144,6 +152,20 @@ export function reduce(store, topic, payload, opts = {}) {
       dir: data.dir || null,
       files: Array.isArray(data.files) ? data.files : [],
     };
+  } else if (kind === 'relaystate') {
+    s.relaystate = {
+      ts: data.ts || 0,
+      armed: !!data.armed,
+      active: !!data.active,
+      status: data.status || 'idle',
+      src_mhz: data.src_mhz == null ? null : Number(data.src_mhz),
+      band: data.band || null,
+      dst_mhz: data.dst_mhz == null ? null : Number(data.dst_mhz),
+      since_ts: data.since_ts == null ? null : Number(data.since_ts),
+      until_ts: data.until_ts == null ? null : Number(data.until_ts),
+      rx_level_db: data.rx_level_db == null ? null : Number(data.rx_level_db),
+      error: data.error || null,
+    };
   } else if (kind === 'spectrum') {
     for (const b of (data.bands || [])) {
       if (!b || b.id == null) continue;
@@ -172,7 +194,7 @@ export class MqttScanClient {
     const client = window.mqtt.connect(url, { username: user, password: pass, reconnectPeriod: 4000 });
     let raf = 0;
     const notify = () => { raf = 0; onChange(this.store); };
-    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry', 'fpv/+/scancfg', 'fpv/+/txstate', 'fpv/+/txfiles']));
+    client.on('connect', () => client.subscribe(['fpv/+/spectrum', 'fpv/+/detection', 'fpv/+/status', 'fpv/+/video', 'fpv/+/rxtune', 'fpv/+/view', 'fpv/+/telemetry', 'fpv/+/scancfg', 'fpv/+/txstate', 'fpv/+/txfiles', 'fpv/+/relaystate']));
     client.on('message', (topic, buf) => {
       try { reduce(this.store, topic, buf.toString(), { depth: this.depth }); } catch { return; }
       if (!raf) raf = requestAnimationFrame(notify);
@@ -212,6 +234,13 @@ export class MqttScanClient {
     if (!this.client || !id) return;
     if (action === 'start' && !Number.isFinite(Number(params && params.freqMhz))) return;
     this.client.publish(`fpv/${id}/rxcmd`, JSON.stringify(buildTxCommand(action, params)),
+      { qos: 1, retain: false });
+  }
+
+  // Auto-relay command — same rxcmd topic, NOT retained (a retained arm would re-arm on every reconnect).
+  publishRelay(id, action, params) {
+    if (!this.client || !id) return;
+    this.client.publish(`fpv/${id}/rxcmd`, JSON.stringify(buildRelayCommand(action, params)),
       { qos: 1, retain: false });
   }
 }
