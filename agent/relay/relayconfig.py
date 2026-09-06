@@ -22,6 +22,9 @@ class RelayConfig:
     tx_gain_db: int = 60
     agc_target: float = 1600.0         # post-AGC peak (of 2047)
     block_samples: int = 32768
+    src_bands: str = ""                # comma list of band ids allowed as sources ("" = all); e.g. "1.2G,2.4G,3.3G"
+                                       # — a source in the target's own band is pointless to relay and feeds back
+    min_sync_db: float = 0.0           # ignore hits with sync SNR below this (band-edge/spur false locks); 0 = off
 
 
 def load_relay_config(env=None):
@@ -39,4 +42,6 @@ def load_relay_config(env=None):
     if "RELAY_RX_GAIN_DB" in env: c.rx_gain_db = int(env["RELAY_RX_GAIN_DB"])
     if "RELAY_TX_GAIN_DB" in env: c.tx_gain_db = int(env["RELAY_TX_GAIN_DB"])
     if "RELAY_AGC_TARGET" in env: c.agc_target = float(env["RELAY_AGC_TARGET"])
+    c.src_bands = env.get("RELAY_SRC_BANDS", c.src_bands)
+    if "RELAY_MIN_SYNC_DB" in env: c.min_sync_db = float(env["RELAY_MIN_SYNC_DB"])
     return c

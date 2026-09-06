@@ -60,6 +60,18 @@ def test_update_hits_none_when_empty_disarmed_or_manual_pending():
     ctl, _, _, _ = _mk(); ctl.update_hits([("x", None, 1.0), ("y", "bad", 2.0)]); assert not ctl.has_pending()
 
 
+def test_update_hits_respects_src_bands_allowlist_and_min_sync():
+    ctl, _, _, _ = _mk(cfg=_cfg(src_bands="1.2G,2.4G,3.3G", min_sync_db=15.0))
+    # 5.8G hit is the strongest but sits in the target's own band -> skipped; 2.4G hit too weak a lock
+    ctl.update_hits([("5.8G", 5720.0, 43.0), ("2.4G", 2447.0, 10.5), ("3.3G", 3470.0, 34.5)])
+    assert ctl.pending()["src_mhz"] == 3470.0
+    ctl.update_hits([("5.8G", 5720.0, 43.0), ("2.4G", 2447.0, 10.5)])
+    assert not ctl.has_pending()                   # nothing eligible
+    ctl2, _, _, _ = _mk()                          # defaults: all bands, no sync floor -> 5.8G wins
+    ctl2.update_hits([("5.8G", 5720.0, 43.0), ("3.3G", 3470.0, 34.5)])
+    assert ctl2.pending()["src_mhz"] == 5720.0
+
+
 # ---- commands ----
 def test_arm_sets_dst_and_publishes_disarm_clears_pending():
     ctl, pub, _, _ = _mk(cfg=_cfg(armed=False))
