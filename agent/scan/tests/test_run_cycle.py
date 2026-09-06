@@ -723,6 +723,63 @@ def test_main_wires_threshold_controller(monkeypatch):
     assert pubs[0].on_thresholds_command is made[0].apply   # wired to the controller's apply
 
 
+class _FakeRelay:
+    def __init__(self):
+        self.hits = None
+    def update_hits(self, hits):
+        self.hits = list(hits)
+
+
+def test_run_cycle_feeds_relay_with_sync_locked_hits(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()                            # always "published"
+    em.last_sync_snr_db = 33.0
+    monkeypatch.setattr(main, "classify", lambda feat, thr: ("analog", 0.9))
+    relay = _FakeRelay()
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em, relay=relay)
+
+    assert relay.hits                              # called once per cycle with this cycle's hits
+    band, center, snr = relay.hits[0]
+    assert band == "5.8G" and abs(center - 5800.0) < 2.0 and snr == 33.0
+
+
+def test_run_cycle_feeds_relay_empty_list_when_nothing_locks(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    monkeypatch.setattr(main, "classify", lambda feat, thr: ("digital", 0.7))
+    relay = _FakeRelay()
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=_NotVideoEmitter(), relay=relay)
+
+    assert relay.hits == []                        # still called: lets the controller clear pending
+
+
+def test_run_cycle_relay_failure_does_not_break_cycle(tmp_path, monkeypatch):
+    _write_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    class _Boom:
+        def update_hits(self, hits): raise RuntimeError("boom")
+    payload = main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=_FakeEmitter(), relay=_Boom())
+    assert payload is not None and len(payload["detections"]) >= 1
+
+
+def test_run_cycle_feeds_relay_from_loose_carrier_path(tmp_path):
+    # Narrow carrier the strict detector misses -> demod-confirmed via the loose-carrier path;
+    # that "published" branch must feed the relay too (second video_hits.append site).
+    _write_narrow_fixtures(tmp_path)
+    cfg = _config(tmp_path)
+    em = _FakeEmitter()                            # always "published"
+    em.last_sync_snr_db = 21.5
+    relay = _FakeRelay()
+
+    main.run_cycle(cfg, now_ts=1718530000, publisher=_FakePub(), emitter=em, relay=relay)
+
+    assert any(band == "5.8G" and abs(center - 5865) <= 2 and snr == 21.5
+               for band, center, snr in relay.hits)
+
+
 def test_view_lpf_clamp():
     from main import _view_lpf
     assert _view_lpf(3, 8e6) == 3e6           # in-range: bw MHz -> Hz

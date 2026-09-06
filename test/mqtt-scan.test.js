@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyStore, reduce, buildCommand, buildViewCommand, buildThresholdCommand, buildTxCommand } from '../dashboard/public/mqtt-scan.js';
+import { emptyStore, reduce, buildCommand, buildViewCommand, buildThresholdCommand, buildTxCommand, buildRelayCommand } from '../dashboard/public/mqtt-scan.js';
 
 test('reduce ignores unknown/malformed topics', () => {
   assert.deepEqual(reduce(emptyStore(), 'fpv/x/other', '{}'), {});
@@ -169,4 +169,31 @@ test('reduce txstate + txfiles', () => {
   store = reduce(store, 'fpv/bladerf/txfiles', JSON.stringify({ ts: 6, dir: '/var/lib/fpv/tx', files: [{ name: 'c.mp4', size: 9, mtime: 1 }] }));
   assert.equal(store.bladerf.txfiles.files.length, 1);
   assert.equal(store.bladerf.txfiles.files[0].name, 'c.mp4');
+});
+
+test('buildRelayCommand arm/disarm', () => {
+  assert.deepEqual(buildRelayCommand('disarm'), { relay: { action: 'disarm' } });
+  assert.deepEqual(buildRelayCommand('arm', { dstMhz: '5771' }), { relay: { action: 'arm', dst_mhz: 5771 } });
+  assert.deepEqual(buildRelayCommand('arm'), { relay: { action: 'arm' } });        // empty field -> agent default
+});
+
+test('reduce relaystate', () => {
+  let store = emptyStore();
+  store = reduce(store, 'fpv/bladerf/relaystate', JSON.stringify({
+    ts: 5, armed: true, active: true, status: 'relaying', src_mhz: 3470, band: '3.3G', dst_mhz: 5771,
+    since_ts: 100, until_ts: 700, rx_level_db: -13.2, error: null }));
+  const r = store.bladerf.relaystate;
+  assert.equal(r.armed, true);
+  assert.equal(r.active, true);
+  assert.equal(r.status, 'relaying');
+  assert.equal(r.src_mhz, 3470);
+  assert.equal(r.band, '3.3G');
+  assert.equal(r.dst_mhz, 5771);
+  assert.equal(r.until_ts, 700);
+  assert.equal(r.rx_level_db, -13.2);
+  assert.equal(r.error, null);
+  store = reduce(store, 'fpv/bladerf/relaystate', JSON.stringify({ ts: 6, armed: false, active: false, status: 'idle', dst_mhz: 5771 }));
+  assert.equal(store.bladerf.relaystate.armed, false);
+  assert.equal(store.bladerf.relaystate.src_mhz, null);
+  assert.equal(store.bladerf.relaystate.rx_level_db, null);
 });

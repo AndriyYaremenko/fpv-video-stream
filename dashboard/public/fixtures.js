@@ -34,6 +34,7 @@ export const FIXTURES = {
     scancfg: { ts: NOW, snr_threshold_db: 20, min_bandwidth_mhz: 5, occupancy_snr_db: 10, carrier_snr_db: 15, carrier_min_bw_mhz: 0.5 },
     txstate: { ts:NOW, active:true, status:'transmitting', file:'demo.mp4', freq_mhz:5800, gain_db:30, deviation_mhz:4, standard:'PAL', since_ts:NOW-30, until_ts:NOW+90, error:null },
     txfiles: { ts:NOW, dir:'/var/lib/fpv/tx', files:[{ name:'demo.mp4', size:180000000, mtime:NOW-3600 }, { name:'test-bars.mp4', size:90000000, mtime:NOW-7200 }] },
+    relaystate: { ts:NOW, armed:true, active:true, status:'relaying', src_mhz:3470, band:'3.3G', dst_mhz:5771, since_ts:NOW-40, until_ts:NOW+560, rx_level_db:-13.2, error:null },
   }
   , hackrf: {
     online: true, status_ts: NOW,

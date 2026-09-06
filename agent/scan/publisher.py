@@ -55,10 +55,12 @@ class MqttPublisher:
         self._t_scancfg = f"fpv/{scanner_id}/scancfg"
         self._t_txstate = f"fpv/{scanner_id}/txstate"
         self._t_txfiles = f"fpv/{scanner_id}/txfiles"
+        self._t_relaystate = f"fpv/{scanner_id}/relaystate"
         self.on_command = None          # set by the caller: fn(mode, channel)
         self.on_view_command = None     # set by the caller: fn(dict) — SDR view start/stop
         self.on_thresholds_command = None   # set by the caller: fn(dict) — sensitivity thresholds
         self.on_tx_command = None       # set by the caller: fn(dict) — TX generator start/stop/retune
+        self.on_relay_command = None    # set by the caller: fn(dict) — auto-relay arm/disarm
         self.on_connected = None        # set by the caller: fn() — runs after each (re)connect
         self._client = None
 
@@ -123,6 +125,13 @@ class MqttPublisher:
                     self.on_tx_command(data)
                 except Exception:
                     LOG.exception("on_tx_command handler failed")
+            return
+        if "relay" in data:             # auto-relay command — not routed to the RX5808 handler
+            if self.on_relay_command is not None:
+                try:
+                    self.on_relay_command(data)
+                except Exception:
+                    LOG.exception("on_relay_command handler failed")
             return
         if self.on_command is None:
             return
@@ -189,6 +198,13 @@ class MqttPublisher:
         self._publish(
             self._t_txfiles,
             {"scanner_id": self.scanner_id, "ts": ts, "files": files, "dir": dir},
+            self.QOS_DETECTION,
+        )
+
+    def publish_relaystate(self, ts, state):
+        self._publish(
+            self._t_relaystate,
+            {"scanner_id": self.scanner_id, "ts": ts, **state},
             self.QOS_DETECTION,
         )
 
