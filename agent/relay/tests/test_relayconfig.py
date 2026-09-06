@@ -8,6 +8,9 @@ def test_defaults_disabled():
     assert c.lost_db == 12.0 and c.lost_s == 5.0 and c.min_rms == 40.0
     assert c.fs_hz == 20_000_000.0 and c.rx_gain_db == 40 and c.tx_gain_db == 60
     assert c.agc_target == 1600.0 and c.block_samples == 32768
+    assert c.src_bands == "" and c.min_sync_db == 0.0
+    o = load_relay_config({"RELAY_SRC_BANDS": "1.2G,2.4G,3.3G", "RELAY_MIN_SYNC_DB": "15"})
+    assert o.src_bands == "1.2G,2.4G,3.3G" and o.min_sync_db == 15.0
 
 
 def test_truthy_parsing():

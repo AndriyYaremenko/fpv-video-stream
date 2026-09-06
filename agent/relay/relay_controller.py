@@ -70,6 +70,8 @@ class RelayController:
         self._reset = reset or (lambda: None)
         self._manual_pending = manual_pending or (lambda: False)
         self._clock = clock or time.time
+        self._src_bands = {b.strip() for b in str(getattr(cfg, "src_bands", "") or "").split(",") if b.strip()}
+        self._min_sync_db = float(getattr(cfg, "min_sync_db", 0.0) or 0.0)
         self._lock = threading.Lock()
         self.armed = bool(cfg.armed)
         self.dst_mhz = float(cfg.dst_mhz)
@@ -118,6 +120,10 @@ class RelayController:
                     continue
                 if abs(center - dst) <= float(self._cfg.guard_mhz):
                     continue                        # TX would feed straight back into RX
+                if self._src_bands and band not in self._src_bands:
+                    continue                        # e.g. the target's own band: pointless + feedback-prone
+                if snr < self._min_sync_db:
+                    continue                        # weak/false sync lock (band edge, spur)
                 if best is None or snr > best[2]:
                     best = (band, center, snr)
         with self._lock:
