@@ -97,6 +97,7 @@ Bool-парсинг як у `txconfig` (`not in ("0","false","no","")`).
 ## Деплой (orange_pi6)
 - drop-in `/etc/systemd/system/fpv-scan.service.d/relay.conf`: `Environment=RELAY_ENABLED=1`, `Environment=SCAN_BANDS=1.2G:1080-1360,2.4G:2370-2510,3.3G:3200-3500,5.8G:5645-5945` (без 3.3-бенду свіп не бачить 3470).
 - Сервер: `git pull` + `docker compose build dashboard` + `up -d --no-deps dashboard` (wg-easy/mediamtx/mosquitto не чіпати).
+- relay block lives on the TX card: RELAY_ENABLED requires TX_ENABLED on the same node.
 
 ## Тести
 - `agent/relay/tests/test_relayconfig.py`: дефолти; env-перекриття (bool/float/int).

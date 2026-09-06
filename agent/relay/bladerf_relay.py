@@ -72,21 +72,25 @@ def open_bladerf_relay_radio(src_hz, dst_hz, fs_hz, rx_gain_db, tx_gain_db, bloc
     import bladerf
     from bladerf import _bladerf
     radio = bladerf.BladeRF()
-    rx = bladerf.CHANNEL_RX(0)
-    tx = bladerf.CHANNEL_TX(0)
-    for ch in (rx, tx):
-        radio.set_sample_rate(ch, int(fs_hz))
-        radio.set_bandwidth(ch, int(fs_hz))
-    radio.set_frequency(rx, int(src_hz))
-    radio.set_frequency(tx, int(dst_hz))
-    radio.set_gain_mode(rx, _bladerf.GainMode.Manual)
-    radio.set_gain(rx, int(rx_gain_db))
-    radio.set_gain(tx, int(tx_gain_db))
-    for layout in (_bladerf.ChannelLayout.RX_X1, _bladerf.ChannelLayout.TX_X1):
-        radio.sync_config(
-            layout=layout, fmt=_bladerf.Format.SC16_Q11,
-            num_buffers=32, buffer_size=16384, num_transfers=16, stream_timeout=RELAY_STREAM_TIMEOUT_MS,
-        )
-    radio.enable_module(rx, True)
-    radio.enable_module(tx, True)
-    return BladeRfRelayRadio(radio, rx, tx, block_samples)
+    try:
+        rx = bladerf.CHANNEL_RX(0)
+        tx = bladerf.CHANNEL_TX(0)
+        for ch in (rx, tx):
+            radio.set_sample_rate(ch, int(fs_hz))
+            radio.set_bandwidth(ch, int(fs_hz))
+        radio.set_frequency(rx, int(src_hz))
+        radio.set_frequency(tx, int(dst_hz))
+        radio.set_gain_mode(rx, _bladerf.GainMode.Manual)
+        radio.set_gain(rx, int(rx_gain_db))
+        radio.set_gain(tx, int(tx_gain_db))
+        for layout in (_bladerf.ChannelLayout.RX_X1, _bladerf.ChannelLayout.TX_X1):
+            radio.sync_config(
+                layout=layout, fmt=_bladerf.Format.SC16_Q11,
+                num_buffers=32, buffer_size=16384, num_transfers=16, stream_timeout=RELAY_STREAM_TIMEOUT_MS,
+            )
+        radio.enable_module(rx, True)
+        radio.enable_module(tx, True)
+        return BladeRfRelayRadio(radio, rx, tx, block_samples)
+    except Exception:
+        radio.close()
+        raise

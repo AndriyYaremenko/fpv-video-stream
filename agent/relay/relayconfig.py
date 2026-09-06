@@ -16,6 +16,7 @@ class RelayConfig:
     guard_mhz: float = 25.0            # ignore sources within dst±guard (TX would feed back into RX)
     lost_db: float = 12.0              # source "gone": raw RX RMS this far below the session reference...
     lost_s: float = 5.0                # ...for this long
+    min_rms: float = 40.0              # session reference below this = source already dead at open (real ~460)
     fs_hz: float = 20_000_000.0        # RX and TX sample rate (bandwidth = fs)
     rx_gain_db: int = 40
     tx_gain_db: int = 60
@@ -33,6 +34,7 @@ def load_relay_config(env=None):
     if "RELAY_GUARD_MHZ" in env: c.guard_mhz = float(env["RELAY_GUARD_MHZ"])
     if "RELAY_LOST_DB" in env: c.lost_db = float(env["RELAY_LOST_DB"])
     if "RELAY_LOST_S" in env: c.lost_s = float(env["RELAY_LOST_S"])
+    if "RELAY_MIN_RMS" in env: c.min_rms = float(env["RELAY_MIN_RMS"])
     if "RELAY_FS_HZ" in env: c.fs_hz = float(env["RELAY_FS_HZ"])
     if "RELAY_RX_GAIN_DB" in env: c.rx_gain_db = int(env["RELAY_RX_GAIN_DB"])
     if "RELAY_TX_GAIN_DB" in env: c.tx_gain_db = int(env["RELAY_TX_GAIN_DB"])

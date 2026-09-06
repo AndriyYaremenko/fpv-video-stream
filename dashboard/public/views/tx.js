@@ -127,7 +127,7 @@ function updateCard(card, id, store, nowS) {
         + (rs.rx_level_db == null ? '' : ` · вхід ${rs.rx_level_db} дБ`);
     } else if (rs.armed) {
       st.className = 'tx-relay-status mono armed';
-      st.textContent = 'озброєно · чекаю синхро-лок';
+      st.textContent = `озброєно · ціль ${rs.dst_mhz} МГц · чекаю синхро-лок`;
     } else {
       st.className = 'tx-relay-status mono';
       st.textContent = 'вимкнено';
@@ -147,6 +147,7 @@ export function render(container, ctx) {
   }
   const store = ctx.scanStore();
   const nowS = Math.floor(Date.now() / 1000);
+  // relay block lives on the TX card: RELAY_ENABLED requires TX_ENABLED on the same node
   const ids = Object.keys(store).filter((id) => store[id] && store[id].txstate);
 
   if (!ids.length) {

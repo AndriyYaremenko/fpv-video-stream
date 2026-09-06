@@ -21,12 +21,16 @@ LEVEL_PUBLISH_S = 2.0            # rx_level_db refresh cadence in relaystate
 
 class _LevelWatch:
     """Source-alive tracker on RAW input RMS: 'lost' once RMS sits lost_db below the session
-    reference for lost_s continuously (recovers if it comes back before that)."""
+    reference for lost_s continuously (recovers if it comes back before that). Reference RMS from
+    the spike is ~460 for a real source (-13 dBFS), so min_rms defaults to a generous floor: if the
+    session reference itself lands below min_rms, the source was already dead when we started
+    listening (this session's "reference" is just noise floor) and we mark lost immediately."""
 
-    def __init__(self, lost_db, lost_s, clock):
+    def __init__(self, lost_db, lost_s, clock, min_rms):
         self._lost_db = lost_db
         self._lost_s = lost_s
         self._clock = clock
+        self._min_rms = min_rms
         self._t0 = clock()
         self._ref_samples = []
         self.ref = None
@@ -40,6 +44,8 @@ class _LevelWatch:
             if now - self._t0 >= REF_WINDOW_S:
                 s = sorted(self._ref_samples)
                 self.ref = s[len(s) // 2] or 1.0
+                if self.ref < self._min_rms:
+                    self.lost = True
             return
         drop_db = 20.0 * math.log10(self.ref / max(float(rms), 1e-6))
         if drop_db >= self._lost_db:
@@ -84,6 +90,7 @@ class RelayController:
                 self.dst_mhz = float(d)
             self.armed = True
             LOG.info("relay armed (dst=%.1f MHz)", self.dst_mhz)
+            self._last = {**self._last, "error": None}     # clear a stale error from a prior session
             self._pub(self._last, self._now())      # re-publish with the new armed/dst
             return
         if action == "disarm":
@@ -100,7 +107,8 @@ class RelayController:
     def update_hits(self, hits):
         """hits: iterable of (band, center_mhz, sync_snr_db) for sync-locked analog video seen this
         cycle. Picks the strongest outside dst±guard; only when armed and nothing manual pends."""
-        best = None
+        dst = self.dst_mhz                          # snapshot: an arm landing mid-loop must not
+        best = None                                 # mix an old-dst guard check with a new-dst store
         if self.armed and not self._manual_pending():
             for band, center, snr in hits:
                 try:
@@ -108,13 +116,13 @@ class RelayController:
                     snr = float(snr) if snr is not None else 0.0
                 except (TypeError, ValueError):
                     continue
-                if abs(center - self.dst_mhz) <= float(self._cfg.guard_mhz):
+                if abs(center - dst) <= float(self._cfg.guard_mhz):
                     continue                        # TX would feed straight back into RX
                 if best is None or snr > best[2]:
                     best = (band, center, snr)
         with self._lock:
             self._pending = None if best is None else {
-                "band": best[0], "src_mhz": best[1], "dst_mhz": self.dst_mhz, "sync_snr_db": best[2]}
+                "band": best[0], "src_mhz": best[1], "dst_mhz": dst, "sync_snr_db": best[2]}
 
     # ---- arbitration hooks (scan loop) ----
     def pending(self):
@@ -128,6 +136,8 @@ class RelayController:
 
     # ---- session (scan loop, blocking) ----
     def run_relay(self, req):
+        if not self.armed or self._manual_pending():
+            return None                   # request went stale between pending() and here
         error = None
         radio = None
         c = self._cfg
@@ -142,7 +152,7 @@ class RelayController:
             st = {"active": True, "status": "relaying", "src_mhz": src, "band": band, "dst_mhz": dst,
                   "since_ts": since, "until_ts": int(deadline), "rx_level_db": None, "error": None}
             self._pub(st, since)
-            watch = _LevelWatch(float(c.lost_db), float(c.lost_s), self._clock)
+            watch = _LevelWatch(float(c.lost_db), float(c.lost_s), self._clock, float(c.min_rms))
             last_pub = [self._clock()]
 
             def on_level(rms):
@@ -158,8 +168,12 @@ class RelayController:
 
             self._loop_fn(radio, int(c.block_samples), stop_check, on_level, float(c.agc_target))
             if watch.lost:
-                LOG.info("relay: source %.1f MHz lost (%.0f dB below reference for %.0fs)",
-                         src, c.lost_db, c.lost_s)
+                if watch.ref is not None and watch.ref < float(c.min_rms):
+                    LOG.info("relay: source %.1f MHz already gone at open (ref=%.1f < min_rms=%.1f)",
+                             src, watch.ref, c.min_rms)
+                else:
+                    LOG.info("relay: source %.1f MHz lost (%.0f dB below reference for %.0fs)",
+                             src, c.lost_db, c.lost_s)
         except Exception as e:
             LOG.exception("relay run_relay failed")
             error = str(e)

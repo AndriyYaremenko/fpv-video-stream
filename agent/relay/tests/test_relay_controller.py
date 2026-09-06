@@ -96,7 +96,7 @@ def test_run_relay_stops_when_source_lost():
     ctl, pub, _, consumed = _mk(levels=[300.0] * 3 + [30.0] * 57, clock=_stepper(1.0))
     ctl.update_hits([("3.3G", 3470.0, 30.0)])
     ctl.run_relay(ctl.pending())
-    assert 0 < consumed["n"] < 60
+    assert 0 < consumed["n"] <= 10                  # empirically stops at 6 blocks
     assert pub.states[-1][1]["status"] == "idle" and pub.states[-1][1]["error"] is None
 
 
@@ -105,8 +105,29 @@ def test_run_relay_keeps_going_while_level_holds_then_deadline():
     ctl, pub, _, consumed = _mk(levels=[300.0] * 100, clock=_stepper(30.0))
     ctl.update_hits([("3.3G", 3470.0, 30.0)])
     ctl.run_relay(ctl.pending())
-    assert consumed["n"] < 100
+    assert consumed["n"] <= 3                        # empirically stops after 2 blocks
     assert pub.states[-1][1]["status"] == "idle"
+
+
+def test_run_relay_stops_immediately_when_reference_below_min_rms():
+    # source already dead when the session opens: RMS 5.0 the whole way -> reference (median of the
+    # first second) lands at 5.0, well under default min_rms=40 -> lost trips right when ref is set.
+    ctl, pub, _, consumed = _mk(levels=[5.0] * 60, clock=_stepper(1.0))
+    ctl.update_hits([("3.3G", 3470.0, 30.0)])
+    ctl.run_relay(ctl.pending())
+    assert consumed["n"] <= 3
+    assert pub.states[-1][1]["status"] == "idle" and pub.states[-1][1]["error"] is None
+
+
+def test_run_relay_healthy_source_unaffected_by_min_rms_floor():
+    # reference well above min_rms=40 (300 and 200 used elsewhere) -> min-RMS floor never trips;
+    # covered implicitly by test_run_relay_opens_full_duplex_publishes_relaying_then_idle (ref=300)
+    # and test_run_relay_publishes_rx_level_periodically (ref=200); explicit guard here too.
+    ctl, pub, _, consumed = _mk(levels=[200.0] * 20, clock=_stepper(1.0))
+    ctl.update_hits([("3.3G", 3470.0, 30.0)])
+    ctl.run_relay(ctl.pending())
+    assert consumed["n"] == 20
+    assert pub.states[-1][1]["status"] == "idle" and pub.states[-1][1]["error"] is None
 
 
 def test_run_relay_stops_on_manual_command_and_on_disarm():
@@ -148,6 +169,37 @@ def test_open_failure_is_captured_not_raised():
     err = ctl.run_relay(ctl.pending())
     assert err == "no device" and radios == []
     assert pub.states[-1][1]["status"] == "idle" and pub.states[-1][1]["error"] == "no device"
+
+
+def test_arm_after_open_failure_clears_stale_error():
+    ctl, pub, _, _ = _mk(open_fail=True)
+    ctl.update_hits([("3.3G", 3470.0, 30.0)])
+    ctl.run_relay(ctl.pending())
+    assert pub.states[-1][1]["error"] == "no device"
+    ctl.set_command({"relay": {"action": "arm", "dst_mhz": 5771}})
+    assert pub.states[-1][1]["error"] is None
+
+
+def test_run_relay_skips_open_when_disarmed_or_manual_before_start():
+    # request was chosen while armed, but disarm landed before run_relay actually starts
+    ctl, pub, radios, consumed = _mk()
+    ctl.update_hits([("3.3G", 3470.0, 30.0)]); req = ctl.pending()
+    ctl.armed = False
+    n_before = len(pub.states)
+    result = ctl.run_relay(req)
+    assert result is None and radios == [] and consumed["n"] == 0
+    assert len(pub.states) == n_before             # no "relaying" state published
+
+    # request was chosen, then a manual (TX/view) command pended before run_relay starts
+    flag = {"manual": True}
+    ctl2, pub2, radios2, consumed2 = _mk(manual=lambda: flag["manual"])
+    flag["manual"] = False
+    ctl2.update_hits([("3.3G", 3470.0, 30.0)]); req2 = ctl2.pending()
+    flag["manual"] = True
+    n_before2 = len(pub2.states)
+    result2 = ctl2.run_relay(req2)
+    assert result2 is None and radios2 == [] and consumed2["n"] == 0
+    assert len(pub2.states) == n_before2
 
 
 def test_announce_republishes_last_state_and_survives_no_publisher():
